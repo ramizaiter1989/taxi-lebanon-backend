@@ -10,7 +10,7 @@ use App\Events\DriverLocationUpdated;
 use App\Events\RideRequested;
 use App\Events\RideAccepted;
 use App\Traits\PolylineTrait;
-
+use App\Notifications\RideNotification;
 
 class RideController extends Controller
 {
@@ -36,10 +36,30 @@ class RideController extends Controller
             'status' => 'pending',
         ]);
 
+
+         $nearbyDrivers = Driver::where('availability_status', true)
+        ->whereRaw('...')  // your distance query
+        ->with('user')
+        ->get();
+    
+        foreach ($nearbyDrivers as $driver) {
+            $driver->user->notify(new RideNotification(
+                'New Ride Request',
+                'A passenger nearby needs a ride',
+                [
+                    'type' => 'new_ride',
+                    'ride_id' => $ride->id,
+                    'pickup_lat' => $ride->origin_lat,
+                    'pickup_lng' => $ride->origin_lng
+                ]
+            ));
+        }
+
         // Notify all drivers in general (drivers filter based on scanning range in frontend)
         RideRequested::dispatch($ride);
 
         return response()->json($ride);
+        
     }
 
     /**
@@ -67,6 +87,20 @@ class RideController extends Controller
             ])
             ->get();
 
+            return response()->json($rides);
+
+            $ride->passenger->notify(new RideNotification(
+
+            'Ride Accepted',
+            "Driver {$driver->user->name} accepted your ride",
+            [
+                'type' => 'ride_accepted',
+                'ride_id' => $ride->id,
+                'driver_name' => $driver->user->name,
+                'driver_phone' => $driver->user->phone
+            ]
+        ));
+
         return response()->json($rides);
     }
 
@@ -81,6 +115,12 @@ class RideController extends Controller
         if ($ride->driver_id && $ride->driver_id !== $driver->id) {
             return response()->json(['error' => 'Ride already assigned to another driver'], 403);
         }
+        // In acceptRide method:
+        $ride->passenger->notify(new RideNotification(
+            'Ride Accepted',
+            "Driver {$driver->user->name} has accepted your ride",
+            ['type' => 'ride_accepted', 'ride_id' => $ride->id]
+        ));
 
         $ride->driver_id = $driver->id;
         $ride->status = 'in_progress'; // Observer sets started_at
@@ -105,11 +145,27 @@ class RideController extends Controller
 
         $ride->status = 'arrived'; // Observer sets arrived_at
         $ride->save();
-
+        // In markArrived method:
+        $ride->passenger->notify(new RideNotification(
+            'Driver Arrived',
+            'Your driver has arrived at the pickup location',
+            ['type' => 'driver_arrived', 'ride_id' => $ride->id]
+        ));
         // Calculate fare dynamically
         $this->calculateFare($ride);
 
         return response()->json($ride);
+        $ride->passenger->notify(new RideNotification(
+        'Driver Arrived',
+        'Your driver has arrived at the pickup location',
+        [
+            'type' => 'driver_arrived',
+            'ride_id' => $ride->id
+        ]
+    ));
+    
+    return response()->json($ride);
+    
     }
     public function estimateFare(Request $request)
     {
@@ -133,20 +189,147 @@ class RideController extends Controller
     }
 
     /**
+ * Update ride status
+ */
+public function updateStatus(Request $request, Ride $ride)
+{
+    $user = $request->user();
+    
+    // Authorization: Only passenger, assigned driver, or admin can update
+    if ($ride->passenger_id !== $user->id && 
+        $ride->driver_id !== $user->driver?->id && 
+        $user->role !== 'admin') {
+        return response()->json(['error' => 'Unauthorized'], 403);
+    }
+
+    $request->validate([
+        'status' => 'required|in:pending,accepted,in_progress,arrived,cancelled',
+    ]);
+
+    $ride->update([
+        'status' => $request->status
+    ]);
+
+    return response()->json([
+        'message' => 'Ride status updated successfully',
+        'ride' => $ride
+    ]);
+}
+// RideController
+public function scheduleRide(Request $request)
+{
+    $request->validate([
+        'scheduled_at' => 'required|date|after:now'
+    ]);
+    
+    Ride::create([
+        'scheduled_at' => $request->scheduled_at,
+        'status' => 'scheduled'
+    ]);
+}
+
+// Apply promo code to ride
+/**
+ * Apply promo code
+ */
+public function applyPromoCode(Request $request, Ride $ride)
+{
+    $request->validate([
+        'code' => 'required|string'
+    ]);
+
+    $promo = \App\Models\PromoCode::where('code', strtoupper($request->code))->first();
+
+    if (!$promo) {
+        return response()->json(['error' => 'Invalid promo code'], 400);
+    }
+
+    if (!$promo->isValid($ride->fare)) {
+        return response()->json(['error' => 'Promo code is not valid or expired'], 400);
+    }
+
+    $discount = $promo->calculateDiscount($ride->fare);
+
+    $ride->update([
+        'promo_code_id' => $promo->id,
+        'discount' => $discount,
+        'final_fare' => $ride->fare - $discount
+    ]);
+
+    $promo->increment('used_count');
+
+    return response()->json([
+        'message' => 'Promo code applied successfully',
+        'discount' => $discount,
+        'final_fare' => $ride->final_fare
+    ]);
+}
+
+/**
+ * Request pool ride (ride sharing)
+ */
+public function requestPoolRide(Request $request)
+{
+    $request->validate([
+        'origin_lat' => 'required|numeric',
+        'origin_lng' => 'required|numeric',
+        'destination_lat' => 'required|numeric',
+        'destination_lng' => 'required|numeric',
+    ]);
+
+    // Find matching pool rides within 5km radius going same direction
+    $existingPoolRides = Ride::where('status', 'pending')
+        ->where('is_pool', true)
+        ->whereRaw('
+            (6371 * acos(
+                cos(radians(?)) *
+                cos(radians(origin_lat)) *
+                cos(radians(origin_lng) - radians(?)) +
+                sin(radians(?)) *
+                sin(radians(origin_lat))
+            )) <= 5
+        ', [
+            $request->origin_lat,
+            $request->origin_lng,
+            $request->origin_lat
+        ])
+        ->get();
+
+    // Create new pool ride
+    $ride = Ride::create([
+        'passenger_id' => $request->user()->id,
+        'origin_lat' => $request->origin_lat,
+        'origin_lng' => $request->origin_lng,
+        'destination_lat' => $request->destination_lat,
+        'destination_lng' => $request->destination_lng,
+        'status' => 'pending',
+        'is_pool' => true,
+        'pool_discount_percentage' => 30 // 30% discount for pool rides
+    ]);
+
+    return response()->json([
+        'ride' => $ride,
+        'matching_rides' => $existingPoolRides->count(),
+        'estimated_savings' => '30%'
+    ]);
+}
+    /**
      * Passenger or driver cancels a ride
      */
-    public function cancelRide(Request $request, Ride $ride)
-    {
-        $user = $request->user();
-        if ($ride->passenger_id !== $user->id && $ride->driver_id !== $user->id) {
-            return response()->json(['error' => 'Unauthorized'], 403);
-        }
-
-        $ride->status = 'cancelled';
-        $ride->save();
-
-        return response()->json($ride);
-    }
+   public function cancelRide(Request $request, Ride $ride)
+{
+    $request->validate([
+        'reason' => 'required|string|in:driver_no_show,wrong_location,changed_mind,too_expensive,other',
+        'note' => 'nullable|string|max:200'
+    ]);
+    
+    $ride->update([
+        'status' => 'cancelled',
+        'cancellation_reason' => $request->reason,
+        'cancellation_note' => $request->note,
+        'cancelled_by' => $request->user()->id
+    ]);
+}
 
     /**
      * Update driver location during a ride

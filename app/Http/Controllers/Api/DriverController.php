@@ -13,6 +13,7 @@ use App\Events\DriverLocationUpdated;
 use App\Models\Ride;
 use Illuminate\Support\Facades\Log;
 use App\Traits\PolylineTrait;
+use App\Models\User;
 
 class DriverController extends Controller
 {
@@ -500,6 +501,88 @@ public function driversForPassenger()
 
         return $output;
     }
+//  Set driver schedule (for future use)
+public function setSchedule(Request $request, Driver $driver)
+{
+    // Set when driver plans to be available
+    $request->validate([
+        'day_of_week' => 'required|in:monday,tuesday,...',
+        'start_time' => 'required|date_format:H:i',
+        'end_time' => 'required|date_format:H:i'
+    ]);
+}
+// Block passenger (for future use)
+/**
+ * Block a passenger
+ */
+public function blockPassenger(Request $request, User $passenger)
+{
+    $driver = $request->user()->driver;
+
+    if (!$driver) {
+        return response()->json(['error' => 'Only drivers can block passengers'], 403);
+    }
+
+    if ($passenger->role !== 'passenger') {
+        return response()->json(['error' => 'Can only block passengers'], 400);
+    }
+
+    $validated = $request->validate([
+        'reason' => 'nullable|string|max:255'
+    ]);
+
+    \App\Models\DriverBlockedPassenger::firstOrCreate([
+        'driver_id' => $driver->id,
+        'passenger_id' => $passenger->id
+    ], [
+        'reason' => $validated['reason'] ?? null
+    ]);
+
+    return response()->json(['message' => 'Passenger blocked successfully']);
+}
+
+/**
+ * Unblock a passenger
+ */
+public function unblockPassenger(Request $request, User $passenger)
+{
+    $driver = $request->user()->driver;
+
+    \App\Models\DriverBlockedPassenger::where('driver_id', $driver->id)
+        ->where('passenger_id', $passenger->id)
+        ->delete();
+
+    return response()->json(['message' => 'Passenger unblocked']);
+}
+
+/**
+ * Get blocked passengers
+ */
+public function getBlockedPassengers(Request $request)
+{
+    $driver = $request->user()->driver;
+
+    $blocked = \App\Models\DriverBlockedPassenger::where('driver_id', $driver->id)
+        ->with('passenger:id,name,email,phone')
+        ->get();
+
+    return response()->json($blocked);
+}
+    // Driver earnings report
+public function earnings(Request $request, Driver $driver)
+{
+    $rides = $driver->rides()
+        ->where('status', 'completed')
+        ->whereBetween('completed_at', [$request->from, $request->to])
+        ->get();
+    
+    return response()->json([
+        'total_rides' => $rides->count(),
+        'total_earnings' => $rides->sum('fare'),
+        'average_fare' => $rides->avg('fare'),
+        'total_distance' => $rides->sum('distance'),
+    ]);
+}
 
     private function getRoutePolyline($startLat, $startLng, $endLat, $endLng)
     {

@@ -23,6 +23,10 @@ return new class extends Migration
             $table->boolean('availability_status')->default(true);
 
             $table->string('car_photo')->nullable();
+            $table->string('car_photo_front')->nullable();
+            $table->string('car_photo_back')->nullable();
+            $table->string('car_photo_left')->nullable();
+            $table->string('car_photo_right')->nullable();
             $table->string('license_photo')->nullable();
             $table->string('id_photo')->nullable();
             $table->string('insurance_photo')->nullable();

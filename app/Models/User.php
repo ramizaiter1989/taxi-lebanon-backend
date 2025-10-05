@@ -76,7 +76,10 @@ public function isLocked(): bool
     return (bool) $this->is_locked;
 }
 
-
+public function routeNotificationForFcm()
+{
+    return $this->fcm_token;
+}
     // Relationships
     public function rides()
     {

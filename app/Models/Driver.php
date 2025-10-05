@@ -18,6 +18,10 @@ class Driver extends Model
         'availability_status',   // true/false (active/inactive)
         'rating',
         'car_photo',
+        'car_photo_front',
+        'car_photo_back',
+        'car_photo_left',
+        'car_photo_right',
         'license_photo',
         'id_photo',
         'insurance_photo',

@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use App\Models\FareSetting;
+use App\Models\FareSettings;
 
 class FareSettingsController extends Controller
 {
@@ -13,7 +13,7 @@ class FareSettingsController extends Controller
      */
     public function index()
     {
-        $settings = FareSetting::first();
+        $settings = FareSettings::first();
         return response()->json($settings);
     }
 
@@ -28,10 +28,10 @@ class FareSettingsController extends Controller
             'per_minute_rate' => 'required|numeric|min:0',
         ]);
 
-        $settings = FareSetting::first();
+        $settings = FareSettings::first();
 
         if (!$settings) {
-            $settings = FareSetting::create($request->only([
+            $settings = FareSettings::create($request->only([
                 'base_fare', 'per_km_rate', 'per_minute_rate'
             ]));
         } else {
