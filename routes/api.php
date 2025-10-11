@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Http;
 use App\Models\User;
 
+
 // ========================================
 // API Controllers
 // ========================================
@@ -18,6 +19,7 @@ use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Api\TestController;
 use App\Http\Controllers\Admin\FareSettingsController;
 use App\Http\Controllers\Auth\OtpController;
+use Illuminate\Support\Facades\Broadcast;
 
 // ========================================
 // PUBLIC ROUTES (No Authentication)
@@ -26,7 +28,9 @@ use App\Http\Controllers\Auth\OtpController;
 // Authentication: Register, Login, Logout
 Route::post('register', [AuthController::class, 'register']); // Register new user (passenger/driver)
 Route::post('login', [AuthController::class, 'login']); // Login and get bearer token
-Route::post('logout', [AuthController::class, 'logout']); // Logout and revoke token
+Route::middleware('auth:sanctum')->post('logout', [AuthController::class, 'logout']); // Logout and revoke token
+
+Broadcast::routes(['middleware' => ['auth:sanctum']]);
 
 // OTP Verification: Send, Resend, Verify OTP codes
 Route::prefix('otp')->group(function () {
@@ -96,6 +100,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // User Profile: Get authenticated user's profile
     Route::get('/user/profile', [AuthController::class, 'profile']);
+
+    //passemger location stream
+    Route::post('passenger/stream-location', [PassengerController::class, 'streamLocation']);
+
+    // Get my current location when opening map
+    Route::get('my-location', [DriverController::class, 'getMyLocation']);
     
     // Complete Driver Profile: Submit driver documents after registration (drivers only)
     Route::post('complete-driver-profile', [AuthController::class, 'completeDriverProfile']);
@@ -103,16 +113,20 @@ Route::middleware('auth:sanctum')->group(function () {
     // ========================================
     // RIDES MANAGEMENT
     // ========================================
-    Route::prefix('rides')->group(function () {
-        Route::post('/', [RideController::class, 'store']); // Passenger: Request a new ride
-        Route::get('/available', [RideController::class, 'availableRides']); // Driver: Get rides within scanning range
-        Route::post('{ride}/accept', [RideController::class, 'acceptRide']); // Driver: Accept a ride request
-        Route::post('{ride}/update-location', [RideController::class, 'updateLocation']); // Driver: Update location during ride
-        Route::post('{ride}/arrived', [RideController::class, 'markArrived']); // Driver: Mark as arrived at destination
-        Route::post('{ride}/cancel', [RideController::class, 'cancelRide']); // Passenger/Driver: Cancel ride
-        Route::post('estimate-fare', [RideController::class, 'estimateFare']); // Calculate estimated fare based on distance/duration
-        Route::patch('{ride}/status', [RideController::class, 'updateStatus']); // Update ride status (pending/accepted/in_progress/arrived/cancelled)
-    });
+Route::middleware('auth:sanctum')->prefix('rides')->group(function () {
+    Route::post('/', [RideController::class, 'store']); // Passenger: Request a new ride
+    Route::get('/', [RideController::class, 'index']); // Live rides (passenger -> own live; driver -> assigned live)
+    Route::get('/history', [RideController::class, 'history']); // Completed/cancelled (history)
+    Route::get('/{ride}', [RideController::class, 'show'])->where('ride', '[0-9]+'); // Single ride details (authorized)
+    Route::get('/available', [RideController::class, 'availableRides']); // Driver: Get rides within scanning range
+    Route::post('{ride}/accept', [RideController::class, 'acceptRide']); // Driver: Accept a ride request
+    Route::post('{ride}/update-location', [RideController::class, 'updateLocation']); // Driver: Update location during ride
+    Route::post('{ride}/arrived', [RideController::class, 'markArrived']); // Driver: Mark as arrived at destination
+    Route::post('{ride}/cancel', [RideController::class, 'cancelRide']); // Passenger/Driver: Cancel ride
+    Route::get('/live', [RideController::class, 'current']); // Get current live rides for admin 
+    Route::post('estimate-fare', [RideController::class, 'estimateFare']); // Calculate estimated fare
+    Route::patch('{ride}/status', [RideController::class, 'updateStatus']); // Update ride status
+});
 
     // ========================================
     // DRIVERS MANAGEMENT

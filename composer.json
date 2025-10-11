@@ -24,6 +24,7 @@
         "vonage/client": "^4.2"
     },
     "require-dev": {
+        "barryvdh/laravel-ide-helper": "^3.6",
         "fakerphp/faker": "^1.23",
         "laravel/boost": "^1.1",
         "laravel/breeze": "^2.3",

@@ -1,53 +1,68 @@
 <?php
+
 namespace App\Events;
 
-use App\Models\Driver;
 use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
-use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Queue\SerializesModels;
 
 class DriverLocationUpdated implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public $driver;
-    public $ride_id;
-    public $current_route; // new property for polyline
+    public $driver_id;
+    public $driver_name;
+    public $current_driver_lat;
+    public $current_driver_lng;
 
-    public function __construct(Driver $driver, $ride_id = null, $current_route = null)
+    /**
+     * Create a new event instance.
+     */
+    public function __construct($driverId, $driverName, $lat, $lng)
     {
-        $this->driver = $driver;
-        $this->ride_id = $ride_id;
-        $this->current_route = $current_route;
+        $this->driver_id = $driverId;
+        $this->driver_name = $driverName;
+        $this->current_driver_lat = $lat;
+        $this->current_driver_lng = $lng;
     }
 
-    public function broadcastOn()
+    /**
+     * Get the channels the event should broadcast on.
+     *
+     * @return array<int, \Illuminate\Broadcasting\Channel>
+     */
+    public function broadcastOn(): array
     {
-        // Broadcast to a global drivers channel or ride-specific
-        return $this->ride_id 
-            ? new Channel('ride.' . $this->ride_id) 
-            : new Channel('drivers-location');
+        return [
+            new Channel('drivers-location'),
+        ];
     }
 
+    /**
+     * The event's broadcast name.
+     *
+     * @return string
+     */
     public function broadcastAs(): string
     {
         return 'driver-location-updated';
     }
 
-    public function broadcastWith()
+    /**
+     * Get the data to broadcast.
+     *
+     * @return array<string, mixed>
+     */
+    public function broadcastWith(): array
     {
         return [
-            'driver_id' => $this->driver->id,
-            'name' => $this->driver->user->name ?? null,
-            'vehicle_type' => $this->driver->vehicle_type,
-            'vehicle_number' => $this->driver->vehicle_number,
-            'lat' => $this->driver->current_driver_lat,
-            'lng' => $this->driver->current_driver_lng,
-            'availability_status' => $this->driver->availability_status,
-            'ride_id' => $this->ride_id,
-            'current_route' => $this->current_route,
+            'driver_id' => $this->driver_id,
+            'driver_name' => $this->driver_name,
+            'current_driver_lat' => $this->current_driver_lat,
+            'current_driver_lng' => $this->current_driver_lng,
+            'timestamp' => now()->toISOString(),
         ];
     }
 }

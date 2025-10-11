@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Driver;
-use Faker\Factory as Faker;
+use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use App\Models\DriverActiveDuration;
 use Carbon\Carbon;
@@ -13,14 +13,318 @@ use App\Events\DriverLocationUpdated;
 use App\Models\Ride;
 use Illuminate\Support\Facades\Log;
 use App\Traits\PolylineTrait;
-use App\Models\User;
+use App\Models\DriverBlockedPassenger;
 
 class DriverController extends Controller
 {
     use PolylineTrait;
-    // ---------------------
-    // Update availability
-    // ---------------------
+
+    /**
+     * 🚗 MAIN ENDPOINT: Get drivers/passengers based on user role and context
+     * 
+     * CORRECTED RULES:
+     * - Admin: See ALL drivers + ALL passengers
+     * - Driver (online, no active ride): See ALL OTHER online drivers (not passengers)
+     * - Driver (has active ride): See ONLY their assigned PASSENGER
+     * - Passenger: See ONLY their assigned driver (if ride accepted/in_progress/arrived)
+     */
+    public function index(Request $request)
+    {
+        $user = Auth::user();
+        $driver = $user->driver ?? null;
+        $defaultLocations = [
+            ['lat' => 33.8938, 'lng' => 35.5018],
+            ['lat' => 34.0058, 'lng' => 36.2181],
+            ['lat' => 33.8500, 'lng' => 35.9000],
+            ['lat' => 34.4367, 'lng' => 35.8497],
+            ['lat' => 33.5606, 'lng' => 35.3756],
+            ['lat' => 33.2734, 'lng' => 35.1939],
+        ];
+
+        // ========================================
+        // ADMIN: See ALL drivers + passengers
+        // ========================================
+        if ($user->role === 'admin') {
+            return $this->getAllUsersForAdmin($defaultLocations);
+        }
+
+        // ========================================
+        // PASSENGER: See ONLY assigned driver
+        // ========================================
+        if ($user->role === 'passenger') {
+            return $this->getDriverForPassenger($user, $defaultLocations);
+        }
+
+        // ========================================
+        // DRIVER: Context-dependent visibility
+        // ========================================
+        if ($user->role === 'driver' && $driver->availability_status === true) {
+            return $this->getViewForDriver($user, $defaultLocations);
+        }
+
+        return response()->json(['message' => 'Unauthorized'], 403);
+    }
+
+    /**
+     * 🔹 Admin sees ALL drivers + passengers
+     */
+    private function getAllUsersForAdmin($defaultLocations)
+    {
+        // Get all drivers
+        $drivers = Driver::with(['user', 'rides' => fn($q) => $q->latest()->limit(1), 'rides.rideLogs'])
+            ->get()
+            ->map(function ($driver) use ($defaultLocations) {
+                return $this->formatDriverData($driver, $defaultLocations);
+            });
+
+        // Get all passengers
+        $passengers = User::where('role', 'passenger')
+            ->where('status', true)
+            ->whereNotNull('current_lat')
+            ->whereNotNull('current_lng')
+            ->get()
+            ->map(function ($passenger) {
+                return [
+                    'type' => 'passenger',
+                    'id' => $passenger->id,
+                    'name' => $passenger->name,
+                    'phone' => $passenger->phone,
+                    'lat' => (float) $passenger->current_lat,
+                    'lng' => (float) $passenger->current_lng,
+                    'last_update' => $passenger->last_location_update,
+                ];
+            });
+
+        return response()->json([
+            'role' => 'admin',
+            'drivers' => $drivers,
+            'passengers' => $passengers,
+            'total_drivers' => $drivers->count(),
+            'total_passengers' => $passengers->count(),
+        ]);
+    }
+
+    /**
+     * 🔹 Passenger sees ONLY their assigned driver
+     */
+    private function getDriverForPassenger($user, $defaultLocations)
+    {
+        // Get passenger's active ride
+        $activeRide = Ride::where('passenger_id', $user->id)
+            ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
+            ->with(['driver.user', 'driver.rides.rideLogs'])
+            ->latest()
+            ->first();
+
+        if (!$activeRide || !$activeRide->driver) {
+            return response()->json([
+                'role' => 'passenger',
+                'my_location' => [
+                    'lat' => (float) $user->current_lat,
+                    'lng' => (float) $user->current_lng,
+                ],
+                'driver' => null,
+                'message' => 'No active ride',
+            ]);
+        }
+
+        $driver = $activeRide->driver;
+        $driverData = $this->formatDriverData($driver, $defaultLocations, $activeRide);
+
+        return response()->json([
+            'role' => 'passenger',
+            'my_location' => [
+                'lat' => (float) $user->current_lat,
+                'lng' => (float) $user->current_lng,
+            ],
+            'driver' => $driverData,
+            'active_ride_id' => $activeRide->id,
+            'ride_status' => $activeRide->status,
+            'pickup_location' => [
+                'lat' => (float) $activeRide->origin_lat,
+                'lng' => (float) $activeRide->origin_lng,
+            ],
+            'destination_location' => [
+                'lat' => (float) $activeRide->destination_lat,
+                'lng' => (float) $activeRide->destination_lng,
+            ],
+        ]);
+    }
+
+    /**
+     * 🔹 Driver visibility logic (CORRECTED):
+     * - Has active ride → see ONLY assigned PASSENGER
+     * - Online but no active ride → see ALL OTHER online DRIVERS
+     * - Offline → see nothing
+     */
+    private function getViewForDriver($user, $defaultLocations)
+    {
+        $driver = $user->driver;
+
+        if (!$driver) {
+            return response()->json(['message' => 'Driver profile not found'], 404);
+        }
+
+        // Check if driver has active ride
+        $activeRide = Ride::where('driver_id', $driver->id)
+            ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
+            ->with('passenger')
+            ->latest()
+            ->first();
+
+        // ✅ Case 1: Driver has active ride → Show ONLY PASSENGER
+        if ($activeRide && $activeRide->passenger) {
+            $passenger = $activeRide->passenger;
+            
+            return response()->json([
+                'role' => 'driver',
+                'context' => 'active_ride',
+                'my_location' => [
+                    'lat' => (float) $driver->current_driver_lat,
+                    'lng' => (float) $driver->current_driver_lng,
+                ],
+                'passenger' => [
+                    'type' => 'passenger',
+                    'id' => $passenger->id,
+                    'name' => $passenger->name,
+                    'phone' => $passenger->phone,
+                    'lat' => (float) $passenger->current_lat,
+                    'lng' => (float) $passenger->current_lng,
+                    'last_update' => $passenger->last_location_update,
+                ],
+                'active_ride_id' => $activeRide->id,
+                'ride_status' => $activeRide->status,
+                'pickup_location' => [
+                    'lat' => (float) $activeRide->origin_lat,
+                    'lng' => (float) $activeRide->origin_lng,
+                ],
+                'destination_location' => [
+                    'lat' => (float) $activeRide->destination_lat,
+                    'lng' => (float) $activeRide->destination_lng,
+                ],
+            ]);
+        }
+
+        // ✅ Case 2: Driver is online but no active ride → Show ALL OTHER online drivers
+        if ($driver->availability_status) {
+            $otherDrivers = Driver::where('availability_status', true)
+                ->where('id', '!=', $driver->id) // Exclude self
+                ->with(['user', 'rides' => fn($q) => $q->latest()->limit(1), 'rides.rideLogs'])
+                ->get()
+                ->map(function ($d) use ($defaultLocations) {
+                    return $this->formatDriverData($d, $defaultLocations);
+                });
+
+            return response()->json([
+                'role' => 'driver',
+                'context' => 'online_no_ride',
+                'my_location' => [
+                    'lat' => (float) $driver->current_driver_lat,
+                    'lng' => (float) $driver->current_driver_lng,
+                ],
+                'other_drivers' => $otherDrivers,
+                'total_online' => $otherDrivers->count(),
+            ]);
+        }
+
+        // ✅ Case 3: Driver is offline → Show nothing
+        return response()->json([
+            'role' => 'driver',
+            'context' => 'offline',
+            'my_location' => null,
+            'other_drivers' => [],
+            'message' => 'You are offline. Go online to see other drivers.',
+        ]);
+    }
+
+    /**
+     * 🔹 Format driver data consistently
+     */
+    private function formatDriverData($driver, $defaultLocations, $ride = null)
+    {
+        $latestRide = $ride ?? $driver->rides->first();
+        $latestRideLog = $latestRide?->rideLogs->last();
+
+        $fallback = $defaultLocations[array_rand($defaultLocations)];
+        $currentLat = $latestRideLog?->driver_lat ?? $driver->current_driver_lat ?? $fallback['lat'];
+        $currentLng = $latestRideLog?->driver_lng ?? $driver->current_driver_lng ?? $fallback['lng'];
+
+        $routePolyline = null;
+        if ($latestRide && $latestRide->origin_lat && $latestRide->destination_lat) {
+            $coords = $this->getRoutePolyline(
+                $currentLat,
+                $currentLng,
+                $latestRide->destination_lat,
+                $latestRide->destination_lng
+            );
+            $routePolyline = $this->encodePolyline($coords);
+        }
+
+        return [
+            'type' => 'driver',
+            'id' => $driver->id,
+            'user_id' => $driver->user_id,
+            'name' => $driver->user->name ?? null,
+            'phone' => $driver->user->phone ?? null,
+            'vehicle_type' => $driver->vehicle_type,
+            'vehicle_number' => $driver->vehicle_number,
+            'lat' => (float) $currentLat,
+            'lng' => (float) $currentLng,
+            'availability_status' => $driver->availability_status,
+            'rating' => (float) $driver->rating,
+            'current_route' => $routePolyline,
+            'ride_id' => $latestRide?->id,
+            'ride_status' => $latestRide?->status,
+            'passenger_id' => $latestRide?->passenger_id,
+        ];
+    }
+
+    // ========================================
+    // NEW: Get My Current Location on Map Open
+    // ========================================
+    
+    /**
+     * Get driver's current location when opening map
+     */
+    public function getMyLocation(Request $request)
+    {
+        $user = Auth::user();
+        
+        if ($user->role === 'driver') {
+            $driver = $user->driver;
+            
+            if (!$driver) {
+                return response()->json(['error' => 'Driver profile not found'], 404);
+            }
+            
+            return response()->json([
+                'role' => 'driver',
+                'my_location' => [
+                    'lat' => (float) $driver->current_driver_lat,
+                    'lng' => (float) $driver->current_driver_lng,
+                ],
+                'is_online' => $driver->availability_status,
+                'scanning_range_km' => $driver->scanning_range_km ?? 10,
+            ]);
+        }
+        
+        if ($user->role === 'passenger') {
+            return response()->json([
+                'role' => 'passenger',
+                'my_location' => [
+                    'lat' => (float) $user->current_lat,
+                    'lng' => (float) $user->current_lng,
+                ],
+            ]);
+        }
+        
+        return response()->json(['error' => 'Invalid role'], 403);
+    }
+
+    // ========================================
+    // EXISTING METHODS (Keep as is)
+    // ========================================
+
     public function updateAvailability(Request $request)
     {
         $request->validate([
@@ -39,231 +343,73 @@ class DriverController extends Controller
         return response()->json($request->user()->driver);
     }
 
-    // ---------------------
-    // List available drivers
-    // ---------------------
-    public function index()
-{
-    // Default fallback locations (in case a driver has no ride)
-    $defaultLocations = [
-        ['lat' => 33.8938, 'lng' => 35.5018],
-        ['lat' => 34.0058, 'lng' => 36.2181],
-        ['lat' => 33.8500, 'lng' => 35.9000],
-        ['lat' => 34.4367, 'lng' => 35.8497],
-        ['lat' => 33.5606, 'lng' => 35.3756],
-        ['lat' => 33.2734, 'lng' => 35.1939],
-        ['lat' => 33.9700, 'lng' => 35.9000],
-        ['lat' => 34.1200, 'lng' => 35.6500],
-    ];
+    public function showProfile(Request $request, ?Driver $driver = null)
+    {
+        $user = Auth::user();
 
-    $driversQuery = Driver::query()->where('availability_status', true)
-        ->with(['user', 'rides' => fn($q) => $q->latest()->limit(1), 'rides.rideLogs']);
-
-    // If the user is not admin, show only their driver record
-    if (Auth::user()->role !== 'admin') {
-    $driversQuery->where('user_id', Auth::id());
-}
-
-
-    $drivers = $driversQuery->get()->map(function ($driver) use ($defaultLocations) {
-        $latestRide = $driver->rides->first();
-        $latestRideLog = $latestRide?->rideLogs->last();
-
-        // Fallback location if no ride exists
-        $fallback = $defaultLocations[array_rand($defaultLocations)];
-        $currentLat = $latestRideLog->driver_lat ?? $driver->current_driver_lat ?? $fallback['lat'];
-        $currentLng = $latestRideLog->driver_lng ?? $driver->current_driver_lng ?? $fallback['lng'];
-
-        // Generate polyline if a ride exists
-        $routePolyline = null;
-        if ($latestRideLog) {
-            $coords = $this->getRoutePolyline(
-                $latestRideLog->start_lat,
-                $latestRideLog->start_lng,
-                $latestRideLog->end_lat,
-                $latestRideLog->end_lng
-            );
-            $routePolyline = $this->encodePolyline($coords);
-        }
-
-        return [
-            'id' => $driver->id,
-            'name' => $driver->user->name ?? null,
-            'vehicle_type' => $driver->vehicle_type,
-            'vehicle_number' => $driver->vehicle_number,
-            'current_driver_lat' => $currentLat,
-            'current_driver_lng' => $currentLng,
-            'availability_status' => $driver->availability_status,
-            'rating' => $driver->rating,
-            'current_route' => $routePolyline,
-            'ride_id' => $latestRide?->id,
-        ];
-    });
-
-    return response()->json($drivers);
-}
-// ---------------------
-// Fetch authenticated driver's profile
-// ---------------------
-public function showProfile(Request $request, ?Driver $driver = null)
-{
-    $user = Auth::user();
-
-    // If the user is an admin, $driver must be passed
-    if ($user->role === 'admin') {
-        if (!$driver) {
-            return response()->json(['message' => 'Driver ID is required for admin'], 400);
-        }
-    } else {
-        // For normal drivers, use their own driver record if not passed
-        $driver = $driver ?? $user->driver;
-        if (!$driver) {
-            return response()->json(['message' => 'Driver profile not found'], 404);
-        }
-    }
-
-    // Authorization: admin can access any driver, normal drivers only their own
-    if (!$user->role === 'admin' && $driver->user_id !== $user->id) {
-        return response()->json(['message' => 'Unauthorized'], 403);
-    }
-
-    // Convert stored file paths to public URLs
-    $driverData = $driver->toArray();
-    foreach (['car_photo', 'license_photo', 'id_photo', 'insurance_photo'] as $photoField) {
-        $driverData[$photoField] = $driver->$photoField ? asset('storage/' . $driver->$photoField) : null;
-    }
-
-    return response()->json($driverData);
-}
-
-
-// ---------------------
-// Update authenticated driver's profile
-// ---------------------
-public function updateProfile(Request $request, Driver $driver)
-{
-    $user = Auth::user();
-Log::info('UpdateProfile called', [
-        'user_id' => $user->id,
-        'driver_id' => $driver->id,
-        'request_data' => $request->all()
-    ]);
-    // Authorization
-    if ($user->role !== 'admin' && $driver->user_id !== $user->id) {
-        Log::warning('Unauthorized attempt', ['user_id' => $user->id]);
-        return response()->json(['message' => 'Unauthorized'], 403);
-
-    }
-
-    // Validate inputs
-    $validated = $request->validate([
-        'license_number' => ['nullable', 'string', 'max:50'],
-        'vehicle_type' => ['nullable', 'string', 'max:50'],
-        'vehicle_number' => ['nullable', 'string', 'max:50'],
-        'rating' => ['nullable', 'numeric', 'between:0,10'],
-        'availability_status' => ['nullable', 'boolean'],
-        'current_driver_lat' => ['nullable', 'numeric'],
-        'current_driver_lng' => ['nullable', 'numeric'],
-        'scanning_range_km' => ['nullable', 'numeric'],
-        'active_at' => ['nullable', 'date'],
-        'inactive_at' => ['nullable', 'date'],
-        'car_photo' => ['nullable', 'image', 'max:2048'],
-        'license_photo' => ['nullable', 'image', 'max:2048'],
-        'id_photo' => ['nullable', 'image', 'max:2048'],
-        'insurance_photo' => ['nullable', 'image', 'max:2048'],
-    ]);
-
-    // Ensure checkbox is handled
-    if ($request->has('availability_status')) {
-        $validated['availability_status'] = true;
-    } elseif ($request->has('availability_status') === false) {
-        $validated['availability_status'] = false;
-    }
-
-    // Handle optional file uploads
-    foreach (['car_photo', 'license_photo', 'id_photo', 'insurance_photo'] as $photoField) {
-        if ($request->hasFile($photoField)) {
-            $path = $request->file($photoField)->store('drivers', 'public');
-            $validated[$photoField] = $path;
-        }
-    }
-
-    // Update only submitted fields
-    $driver->update($validated);
-
-    // Redirect back to driver list with success
-    return redirect()->route('admin.drivers.index')
-        ->with('success', 'Driver updated successfully.');
-}
-
-
-
-// ---------------------
-
-
-public function driversForPassenger()
-{
-    $user = Auth::user();
-
-    // Default fallback locations
-    $defaultLocations = [
-        ['lat' => 33.8938, 'lng' => 35.5018],
-        ['lat' => 34.0058, 'lng' => 36.2181],
-        ['lat' => 33.8500, 'lng' => 35.9000],
-        ['lat' => 34.4367, 'lng' => 35.8497],
-        ['lat' => 33.5606, 'lng' => 35.3756],
-        ['lat' => 33.2734, 'lng' => 35.1939],
-        ['lat' => 33.9700, 'lng' => 35.9000],
-        ['lat' => 34.1200, 'lng' => 35.6500],
-    ];
-
-    // Only drivers who have accepted a ride for this passenger
-    $drivers = Driver::whereHas('rides', function($q) use ($user) {
-            $q->where('passenger_id', $user->id)
-              ->where('status', 'accepted'); // or your ride status code
-        })
-        ->with(['user', 'rides' => fn($q) => $q->latest()->limit(1), 'rides.rideLogs'])
-        ->get()
-        ->map(function ($driver) use ($defaultLocations) {
-            $latestRide = $driver->rides->first();
-            $latestRideLog = $latestRide?->rideLogs->last();
-
-            $fallback = $defaultLocations[array_rand($defaultLocations)];
-            $currentLat = $latestRideLog->driver_lat ?? $driver->current_driver_lat ?? $fallback['lat'];
-            $currentLng = $latestRideLog->driver_lng ?? $driver->current_driver_lng ?? $fallback['lng'];
-
-            $routePolyline = null;
-            if ($latestRideLog) {
-                $coords = $this->getRoutePolyline(
-                    $latestRideLog->start_lat,
-                    $latestRideLog->start_lng,
-                    $latestRideLog->end_lat,
-                    $latestRideLog->end_lng
-                );
-                $routePolyline = $this->encodePolyline($coords);
+        if ($user->role === 'admin') {
+            if (!$driver) {
+                return response()->json(['message' => 'Driver ID is required for admin'], 400);
             }
+        } else {
+            $driver = $driver ?? $user->driver;
+            if (!$driver) {
+                return response()->json(['message' => 'Driver profile not found'], 404);
+            }
+        }
 
-            return [
-                'id' => $driver->id,
-                'name' => $driver->user->name ?? null,
-                'vehicle_type' => $driver->vehicle_type,
-                'vehicle_number' => $driver->vehicle_number,
-                'current_driver_lat' => $currentLat,
-                'current_driver_lng' => $currentLng,
-                'availability_status' => $driver->availability_status,
-                'rating' => $driver->rating,
-                'current_route' => $routePolyline,
-                'ride_id' => $latestRide?->id,
-            ];
-        });
+        if ($user->role !== 'admin' && $driver->user_id !== $user->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
 
-    return response()->json($drivers);
-}
+        $driverData = $driver->toArray();
+        foreach (['car_photo', 'license_photo', 'id_photo', 'insurance_photo'] as $photoField) {
+            $driverData[$photoField] = $driver->$photoField ? asset('storage/' . $driver->$photoField) : null;
+        }
 
+        return response()->json($driverData);
+    }
 
-    // ---------------------
-    // Go online
-    // ---------------------
+    public function updateProfile(Request $request, Driver $driver)
+    {
+        $user = Auth::user();
+
+        if ($user->role !== 'admin' && $driver->user_id !== $user->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'license_number' => ['nullable', 'string', 'max:50'],
+            'vehicle_type' => ['nullable', 'string', 'max:50'],
+            'vehicle_number' => ['nullable', 'string', 'max:50'],
+            'rating' => ['nullable', 'numeric', 'between:0,10'],
+            'availability_status' => ['nullable', 'boolean'],
+            'current_driver_lat' => ['nullable', 'numeric'],
+            'current_driver_lng' => ['nullable', 'numeric'],
+            'scanning_range_km' => ['nullable', 'numeric'],
+            'active_at' => ['nullable', 'date'],
+            'inactive_at' => ['nullable', 'date'],
+            'car_photo' => ['nullable', 'image', 'max:2048'],
+            'license_photo' => ['nullable', 'image', 'max:2048'],
+            'id_photo' => ['nullable', 'image', 'max:2048'],
+            'insurance_photo' => ['nullable', 'image', 'max:2048'],
+        ]);
+
+        foreach (['car_photo', 'license_photo', 'id_photo', 'insurance_photo'] as $photoField) {
+            if ($request->hasFile($photoField)) {
+                $path = $request->file($photoField)->store('drivers', 'public');
+                $validated[$photoField] = $path;
+            }
+        }
+
+        $driver->update($validated);
+
+        return response()->json([
+            'message' => 'Profile updated successfully',
+            'driver' => $driver
+        ]);
+    }
+
     public function goOnline(Driver $driver)
     {
         $this->authorizeDriver($driver);
@@ -279,27 +425,11 @@ public function driversForPassenger()
             'active_at' => now(),
         ]);
 
-        $latestRideLog = $driver->rides()->latest()->first()?->rideLogs->last();
-        $routePolyline = null;
-
-        if ($latestRideLog) {
-            $coords = $this->getRoutePolyline(
-                $latestRideLog->start_lat,
-                $latestRideLog->start_lng,
-                $latestRideLog->end_lat,
-                $latestRideLog->end_lng
-            );
-            $routePolyline = $this->encodePolyline($coords);
-        }
-
-        broadcast(new DriverLocationUpdated($driver, $latestRideLog?->ride_id, $routePolyline))->toOthers();
+        broadcast(new DriverLocationUpdated($driver->id, $driver->user->name, null, null))->toOthers();
 
         return response()->json(['message' => 'Driver online', 'driver' => $driver]);
     }
 
-    // ---------------------
-    // Go offline
-    // ---------------------
     public function goOffline(Driver $driver)
     {
         $this->authorizeDriver($driver);
@@ -321,71 +451,76 @@ public function driversForPassenger()
             ]);
         }
 
-        $latestRideLog = $driver->rides()->latest()->first()?->rideLogs->last();
-        $routePolyline = null;
-
-        if ($latestRideLog) {
-            $coords = $this->getRoutePolyline(
-                $latestRideLog->start_lat,
-                $latestRideLog->start_lng,
-                $latestRideLog->end_lat,
-                $latestRideLog->end_lng
-            );
-            $routePolyline = $this->encodePolyline($coords);
-        }
-
-        broadcast(new DriverLocationUpdated($driver, $latestRideLog?->ride_id, $routePolyline))->toOthers();
+        broadcast(new DriverLocationUpdated($driver->id, $driver->user->name, null, null))->toOthers();
 
         return response()->json(['message' => 'Driver offline', 'driver' => $driver]);
     }
 
-    // ---------------------
-    // Update location
-    // ---------------------
-    
 
-    public function updateLocation(Request $request, Driver $driver, $ride_id = null)
-    {
-        $this->authorizeDriver($driver); // driver or admin check
-
-        $request->validate([
-            'lat' => 'required|numeric|between:-90,90',
-            'lng' => 'required|numeric|between:-180,180',
-        ]);
-
-        $driver->update([
-            'current_driver_lat' => $request->lat,
-            'current_driver_lng' => $request->lng,
-        ]);
-
-        // Only broadcast ride polyline if ride exists
-        $ride = $ride_id ? Ride::find($ride_id) : $driver->rides()->latest()->first();
-        $routePolyline = null;
-        $rideLog = $ride?->rideLogs->last();
-
-        if ($rideLog) {
-            $coords = $this->getRoutePolyline(
-                $rideLog->start_lat,
-                $rideLog->start_lng,
-                $rideLog->end_lat,
-                $rideLog->end_lng
-            );
-            $routePolyline = $this->encodePolyline($coords);
+    /**
+     * Update driver's current location
+     * 
+     * @param Request $request
+     * @param Driver $driver
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateLocation(Request $request, Driver $driver)
+{
+    try {
+        // Check authorization
+        if ($request->user()->id !== $driver->user_id) {
+            return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        broadcast(new DriverLocationUpdated($driver, $ride?->id, $routePolyline))->toOthers();
+        // Validate the request (use current_driver_lat/lng)
+        $validated = $request->validate([
+                'current_driver_lat' => 'required|numeric|between:-90,90',
+                'current_driver_lng' => 'required|numeric|between:-180,180',
+            ]);
+
+            $driver->update([
+                'current_driver_lat' => $validated['current_driver_lat'],
+                'current_driver_lng' => $validated['current_driver_lng'],
+            ]);
+
+
+        // Broadcast location update
+        broadcast(new DriverLocationUpdated(
+            $driver->id,
+            $driver->user->name,
+            $validated['current_driver_lat'],
+            $validated['current_driver_lng']
+        ))->toOthers();
 
         return response()->json([
-            'message' => 'Location updated & broadcasted',
-            'lat' => $driver->current_driver_lat,
-            'lng' => $driver->current_driver_lng,
-            'ride_id' => $ride?->id,
-            'current_route' => $routePolyline ?: null,
+            'success' => true,
+            'message' => 'Location updated successfully',
+            'data' => [
+                'driver_id' => $driver->id,
+                'lat' => $driver->current_driver_lat,
+                'lng' => $driver->current_driver_lng,
+                'updated_at' => $driver->updated_at,
+            ]
         ]);
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Validation failed',
+            'errors' => $e->errors()
+        ], 422);
+    } catch (\Exception $e) {
+        Log::error('Error updating driver location: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to update location',
+            'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+        ], 500);
     }
-    // ---------------------
-    // Update scanning range
-    // ---------------------
+}
+
+
+
+
     public function updateRange(Request $request, Driver $driver)
     {
         $this->authorizeDriver($driver);
@@ -404,9 +539,6 @@ public function driversForPassenger()
         ]);
     }
 
-    // ---------------------
-    // Driver activity logs
-    // ---------------------
     public function activityLogs(Driver $driver)
     {
         $this->authorizeDriver($driver);
@@ -426,9 +558,6 @@ public function driversForPassenger()
         return response()->json($logs);
     }
 
-    // ---------------------
-    // Live status
-    // ---------------------
     public function liveStatus(Driver $driver)
     {
         $this->authorizeDriver($driver);
@@ -452,25 +581,70 @@ public function driversForPassenger()
         return response()->json($status);
     }
 
-    // ---------------------
-    // Helper: authorize driver
-    // ---------------------
-    private function authorizeDriver(Driver $driver)
-{
-    if (Auth::user()->role !== 'admin' && $driver->user_id !== Auth::id()) {
-        abort(response()->json(['message' => 'Unauthorized'], 403));
+    /**
+     * Block a passenger
+     */
+    public function blockPassenger(Request $request, User $passenger)
+    {
+        $driver = $request->user()->driver;
+
+        if (!$driver) {
+            return response()->json(['error' => 'Only drivers can block passengers'], 403);
+        }
+
+        if ($passenger->role !== 'passenger') {
+            return response()->json(['error' => 'Can only block passengers'], 400);
+        }
+
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:255'
+        ]);
+
+        DriverBlockedPassenger::firstOrCreate([
+            'driver_id' => $driver->id,
+            'passenger_id' => $passenger->id
+        ], [
+            'reason' => $validated['reason'] ?? null
+        ]);
+
+        return response()->json(['message' => 'Passenger blocked successfully']);
     }
-}
-    public function indexAdmin()
-            {
-                $drivers = Driver::with('user')->get();
-                return view('admin.drivers.index', compact('drivers'));
-            }
 
+    /**
+     * Unblock a passenger
+     */
+    public function unblockPassenger(Request $request, User $passenger)
+    {
+        $driver = $request->user()->driver;
 
-    // ---------------------
-    // Polyline helpers
-    // ---------------------
+        DriverBlockedPassenger::where('driver_id', $driver->id)
+            ->where('passenger_id', $passenger->id)
+            ->delete();
+
+        return response()->json(['message' => 'Passenger unblocked']);
+    }
+
+    /**
+     * Get blocked passengers
+     */
+    public function getBlockedPassengers(Request $request)
+    {
+        $driver = $request->user()->driver;
+
+        $blocked = DriverBlockedPassenger::where('driver_id', $driver->id)
+            ->with('passenger:id,name,email,phone')
+            ->get();
+
+        return response()->json($blocked);
+    }
+
+    private function authorizeDriver(Driver $driver)
+    {
+        if (Auth::user()->role !== 'admin' && $driver->user_id !== Auth::id()) {
+            abort(response()->json(['message' => 'Unauthorized'], 403));
+        }
+    }
+
     private function encodePolyline(array $coordinates, $precision = 5)
     {
         $factor = pow(10, $precision);
@@ -501,88 +675,6 @@ public function driversForPassenger()
 
         return $output;
     }
-//  Set driver schedule (for future use)
-public function setSchedule(Request $request, Driver $driver)
-{
-    // Set when driver plans to be available
-    $request->validate([
-        'day_of_week' => 'required|in:monday,tuesday,...',
-        'start_time' => 'required|date_format:H:i',
-        'end_time' => 'required|date_format:H:i'
-    ]);
-}
-// Block passenger (for future use)
-/**
- * Block a passenger
- */
-public function blockPassenger(Request $request, User $passenger)
-{
-    $driver = $request->user()->driver;
-
-    if (!$driver) {
-        return response()->json(['error' => 'Only drivers can block passengers'], 403);
-    }
-
-    if ($passenger->role !== 'passenger') {
-        return response()->json(['error' => 'Can only block passengers'], 400);
-    }
-
-    $validated = $request->validate([
-        'reason' => 'nullable|string|max:255'
-    ]);
-
-    \App\Models\DriverBlockedPassenger::firstOrCreate([
-        'driver_id' => $driver->id,
-        'passenger_id' => $passenger->id
-    ], [
-        'reason' => $validated['reason'] ?? null
-    ]);
-
-    return response()->json(['message' => 'Passenger blocked successfully']);
-}
-
-/**
- * Unblock a passenger
- */
-public function unblockPassenger(Request $request, User $passenger)
-{
-    $driver = $request->user()->driver;
-
-    \App\Models\DriverBlockedPassenger::where('driver_id', $driver->id)
-        ->where('passenger_id', $passenger->id)
-        ->delete();
-
-    return response()->json(['message' => 'Passenger unblocked']);
-}
-
-/**
- * Get blocked passengers
- */
-public function getBlockedPassengers(Request $request)
-{
-    $driver = $request->user()->driver;
-
-    $blocked = \App\Models\DriverBlockedPassenger::where('driver_id', $driver->id)
-        ->with('passenger:id,name,email,phone')
-        ->get();
-
-    return response()->json($blocked);
-}
-    // Driver earnings report
-public function earnings(Request $request, Driver $driver)
-{
-    $rides = $driver->rides()
-        ->where('status', 'completed')
-        ->whereBetween('completed_at', [$request->from, $request->to])
-        ->get();
-    
-    return response()->json([
-        'total_rides' => $rides->count(),
-        'total_earnings' => $rides->sum('fare'),
-        'average_fare' => $rides->avg('fare'),
-        'total_distance' => $rides->sum('distance'),
-    ]);
-}
 
     private function getRoutePolyline($startLat, $startLng, $endLat, $endLng)
     {
@@ -606,4 +698,3 @@ public function earnings(Request $request, Driver $driver)
         });
     }
 }
-

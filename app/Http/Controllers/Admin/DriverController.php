@@ -50,9 +50,16 @@ class DriverController extends Controller
             'license_photo' => ['nullable', 'image', 'max:2048'],
             'id_photo' => ['nullable', 'image', 'max:2048'],
             'insurance_photo' => ['nullable', 'image', 'max:2048'],
-            
+            'car_photo_front' => ['nullable', 'image', 'max:2048'], // optional
+            'car_photo_back' => ['nullable', 'image', 'max:2048'], // optional
+            'car_photo_left' => ['nullable', 'image', 'max:2048'], // optional
+            'car_photo_right' => ['nullable', 'image', 'max:2048'], // optional
             // Checkboxes for photo removal
             'remove_car_photo' => ['nullable', 'boolean'],
+            'remove_car_photo_front' => ['nullable', 'boolean'],
+            'remove_car_photo_back' => ['nullable', 'boolean'],
+            'remove_car_photo_left' => ['nullable', 'boolean'],
+            'remove_car_photo_right' => ['nullable', 'boolean'],
             'remove_license_photo' => ['nullable', 'boolean'],
             'remove_id_photo' => ['nullable', 'boolean'],
             'remove_insurance_photo' => ['nullable', 'boolean'],

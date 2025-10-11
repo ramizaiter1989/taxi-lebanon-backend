@@ -9,22 +9,27 @@ use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
+USE Illuminate\Support\Facades\Broadcast;
+USE Illuminate\Support\Facades\Auth;
+use App\Models\Driver;
 
 class RideAccepted implements ShouldBroadcast
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public $ride;
+    public $driver;
 
-    public function __construct(Ride $ride)
+    public function __construct(Ride $ride, $driver)
     {
         $this->ride = $ride;
+        $this->driver = $driver;
     }
 
+    // In your RideAccepted event or wherever you notify passengers
     public function broadcastOn()
     {
-        // Broadcast to passenger channel
-        return new PrivateChannel('passenger.'.$this->ride->passenger_id);
+        return new Channel('passenger-' . $this->ride->passenger_id); // Public channel
     }
 
     public function broadcastWith()

@@ -29,6 +29,13 @@ class User extends Authenticatable implements MustVerifyEmail
         'profile_photo',
         'status',
         'is_locked',
+        'is_verified', // optional
+        'wallet_balance', // optional
+        'verification_code', // optional
+        'verification_code_expires_at', // optional
+        'current_lat', // optional
+        'current_lng', // optional
+        'last_location_update', // optional
     ];
 
     /**
@@ -39,6 +46,7 @@ class User extends Authenticatable implements MustVerifyEmail
     protected $hidden = [
         'password',
         'remember_token',
+        'fcm_token', // optional
     ];
 
     /**
@@ -46,17 +54,19 @@ class User extends Authenticatable implements MustVerifyEmail
      *
      * @return array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-            'status' => 'boolean',
-            'is_locked' => 'boolean',
-            'email_verified_at' => 'datetime',
-            'verification_code_expires_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+    'email_verified_at' => 'datetime',
+    'password' => 'hashed',
+    'status' => 'boolean',
+    'is_locked' => 'boolean',
+    'verification_code_expires_at' => 'datetime',
+    'is_verified' => 'boolean',
+    'current_lat' => 'decimal:7',
+    'current_lng' => 'decimal:7',
+    'wallet_balance' => 'decimal:2',
+    ];
+
+
 
   protected static function boot()
 {

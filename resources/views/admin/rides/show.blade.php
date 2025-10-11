@@ -15,7 +15,7 @@
         <div class="mb-3">
             <label>Status</label>
             <select name="status" class="form-control">
-                @foreach(['pending','ongoing','completed','cancelled'] as $status)
+                @foreach(['pending','in_progress','completed','cancelled'] as $status)
                     <option value="{{ $status }}" {{ $ride->status === $status ? 'selected' : '' }}>
                         {{ ucfirst($status) }}
                     </option>

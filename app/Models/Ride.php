@@ -8,17 +8,41 @@ use App\Models\FareSetting;
 class Ride extends Model
 {
     protected $fillable = [
-        'passenger_id',
-        'driver_id',
-        'origin_lat',
-        'origin_lng',
-        'destination_lat',
-        'destination_lng',
-        'status',
-        'fare',
-        'distance',
-        'duration',
-    ];
+    'passenger_id',
+    'driver_id',
+    'origin_lat',
+    'origin_lng',
+    'destination_lat',
+    'destination_lng',
+    'status',
+    'fare',
+    'distance',
+    'duration',
+    'current_driver_lat',
+    'current_driver_lng',
+    'cancellation_reason',
+    'cancellation_note',
+    'cancelled_by',
+    'cancelled_at',
+    'is_pool',
+    'pool_discount_percentage',
+    'promo_code_id',
+    'discount',
+    'final_fare',
+    'sos_triggered',
+    'sos_triggered_at',
+];
+
+protected $casts = [
+    'is_pool' => 'boolean',
+    'sos_triggered' => 'boolean',
+    'sos_triggered_at' => 'datetime',
+    'cancelled_at' => 'datetime',
+    'created_at' => 'datetime',
+    'started_at' => 'datetime',
+    'completed_at' => 'datetime',
+    'arrived_at' => 'datetime',
+];
 
     // Auto-append attributes to JSON
     protected $appends = [

@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Driver extends Model
 {
+    
     protected $fillable = [
         'user_id',
         'license_number',
@@ -14,7 +15,6 @@ class Driver extends Model
         'current_driver_lat',
         'current_driver_lng',
         'scanning_range_km',
-        'status',                // if you keep this separate from availability_status
         'availability_status',   // true/false (active/inactive)
         'rating',
         'car_photo',
@@ -28,6 +28,23 @@ class Driver extends Model
         'active_at',
         'inactive_at',
     ];
+
+    protected $casts = [
+    'availability_status' => 'boolean',
+    'active_at' => 'datetime',
+    'inactive_at' => 'datetime',
+    'current_driver_lat' => 'decimal:7',
+    'current_driver_lng' => 'decimal:7',
+    'scanning_range_km' => 'decimal:7',
+    'rating' => 'decimal:1',
+    ];
+
+
+    protected $attributes = [
+        'availability_status' => true,
+        'rating' => 5.0,
+    ];
+
 
     // Relationships
     public function user()

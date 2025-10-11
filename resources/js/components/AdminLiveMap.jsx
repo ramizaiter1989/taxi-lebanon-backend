@@ -7,26 +7,34 @@ import Pusher from "pusher-js";
 
 window.Pusher = Pusher;
 
+// Initialize Echo
 const echo = new Echo({
   broadcaster: "pusher",
   key: import.meta.env.VITE_PUSHER_KEY,
   cluster: import.meta.env.VITE_PUSHER_CLUSTER,
   forceTLS: true,
+  // Optional: if your backend uses auth for private channels
+  // authEndpoint: "https://your-api.com/broadcasting/auth",
+  // auth: {
+  //   headers: {
+  //     Authorization: `Bearer ${localStorage.getItem("token")}`,
+  //   },
+  // },
 });
 
 const driverIcon = new L.Icon({
-  iconUrl: "/public/images/car-icon.png",
+  iconUrl: "/images/car-icon.png",
   iconSize: [30, 30],
 });
 const passengerIcon = new L.Icon({
-  iconUrl: "/public/images/passenger.png",
+  iconUrl: "/images/passenger.png",
   iconSize: [30, 30],
 });
 
 // Cluster icon
 const createClusterIcon = (cluster) => {
   const markers = cluster.getAllChildMarkers();
-  const driverCount = markers.filter(m => m.options.icon.options.iconUrl.includes("driver")).length;
+  const driverCount = markers.filter(m => m.options.icon.options.iconUrl.includes("car")).length;
   const passengerCount = markers.length - driverCount;
 
   let html = `<div style="background-color:gray; border-radius:50%; color:white; width:40px; height:40px; display:flex; align-items:center; justify-content:center;">${markers.length}</div>`;
@@ -47,57 +55,76 @@ const createClusterIcon = (cluster) => {
 
 const AdminLiveMap = () => {
   const [locations, setLocations] = useState([]);
-  const markersRef = useRef({}); // keep refs to markers
+  const markersRef = useRef({});
   const [filter, setFilter] = useState("all");
 
   // Fetch initial locations
   useEffect(() => {
     fetch("/api/admin/live-locations")
-      .then(res => res.json())
-      .then(data => {
-        setLocations(data);
-        // create initial marker refs
-        const refs = {};
-        data.forEach(loc => {
-          refs[`${loc.type}-${loc.id}`] = { ...loc };
-        });
-        markersRef.current = refs;
-      });
+  .then(async (res) => {
+    const data = await res.json();
+    console.log("Fetched live locations:", data);
+
+    // Ensure it's an array — Laravel should return an array but we double-check
+    const list = Array.isArray(data)
+      ? data
+      : Object.values(data || {}); // convert object values to array if needed
+
+    setLocations(list);
+
+    const refs = {};
+    list.forEach((loc) => {
+      refs[`${loc.type}-${loc.id}`] = { ...loc };
+    });
+    markersRef.current = refs;
+  })
+  .catch((err) => console.error("Error fetching live locations:", err));
+
   }, []);
 
-  // Real-time updates
+  // Real-time updates (NEW CHANNELS)
   useEffect(() => {
-    echo.channel("drivers")
-      .listen("DriverLocationUpdated", (e) => {
-        const key = `driver-${e.driver.id}`;
+    // Listen to all drivers
+    echo.channel("drivers-location")
+      .listen(".driver-location-updated", (data) => {
+        const key = `driver-${data.driver_id}`;
         markersRef.current[key] = {
           type: "driver",
-          id: e.driver.id,
-          name: e.driver.name,
-          lat: e.lat,
-          lng: e.lng,
+          id: data.driver_id,
+          name: data.name || `Driver ${data.driver_id}`,
+          lat: data.lat,
+          lng: data.lng,
           last_update: new Date().toISOString(),
         };
         setLocations(Object.values(markersRef.current));
       });
 
-    echo.channel("passengers")
-      .listen("PassengerLocationUpdated", (e) => {
-        const key = `passenger-${e.id}`;
+    // Listen to all passengers
+    echo.channel("passengers-location")
+      .listen(".passenger-location-updated", (data) => {
+        const key = `passenger-${data.id}`;
         markersRef.current[key] = {
           type: "passenger",
-          id: e.id,
-          name: e.name,
-          lat: e.current_lat,
-          lng: e.current_lng,
+          id: data.id,
+          name: data.name || `Passenger ${data.id}`,
+          lat: data.current_lat,
+          lng: data.current_lng,
           last_update: new Date().toISOString(),
         };
         setLocations(Object.values(markersRef.current));
       });
+
+    // Cleanup
+    return () => {
+      echo.leaveChannel("drivers-location");
+      echo.leaveChannel("passengers-location");
+    };
   }, []);
 
   // Filtered locations
-  const filteredLocations = locations.filter(loc => filter === "all" ? true : loc.type === filter);
+  const filteredLocations = locations.filter(loc =>
+    filter === "all" ? true : loc.type === filter
+  );
 
   return (
     <div>
@@ -106,7 +133,6 @@ const AdminLiveMap = () => {
         <button onClick={() => setFilter("driver")}>Drivers</button>
         <button onClick={() => setFilter("passenger")}>Passengers</button>
       </div>
-      <div style={{ margin: "10px" }}>hello</div>
 
       <MapContainer center={[33.8938, 35.5018]} zoom={12} style={{ height: "90vh", width: "100%" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />

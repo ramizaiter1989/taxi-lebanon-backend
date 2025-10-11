@@ -16,10 +16,11 @@ class RideRequested implements ShouldBroadcast
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
     public $ride;
+    public $dontBroadcastToCurrentUser = true;
 
     public function __construct(Ride $ride)
     {
-        $this->ride = $ride;
+        $this->ride = $ride->load('passenger');
     }
 
     public function broadcastOn()
@@ -37,5 +38,9 @@ class RideRequested implements ShouldBroadcast
             'destination_lat' => $this->ride->destination_lat,
             'destination_lng' => $this->ride->destination_lng,
         ];
+    }
+    public function broadcastWhen()
+    {
+        return $this->ride->status === 'pending' && $this->ride->driver_id === null;
     }
 }

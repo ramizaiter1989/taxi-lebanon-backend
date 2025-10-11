@@ -11,7 +11,7 @@ window.axios.defaults.headers.common["X-Requested-With"] = "XMLHttpRequest";
 
 // Assign Pusher to window
 
-window.Pusher = Pusher;
+
 
 window.Echo = new Echo({
     broadcaster: "pusher",
@@ -19,3 +19,4 @@ window.Echo = new Echo({
     cluster: import.meta.env.VITE_PUSHER_APP_CLUSTER,
     forceTLS: true,
 });
+window.Pusher = Pusher;

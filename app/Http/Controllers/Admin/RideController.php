@@ -22,7 +22,7 @@ class RideController extends Controller
     public function update(Request $request, Ride $ride)
     {
         $request->validate([
-            'status' => 'required|in:pending,ongoing,completed,cancelled',
+            'status' => 'required|in:pending,in_progress,arrived,cancelled',
         ]);
 
         $ride->update($request->only('status'));

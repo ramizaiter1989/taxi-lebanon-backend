@@ -44,6 +44,51 @@ class PassengerController extends Controller
     }
 
     /**
+ * Stream passenger location in real-time (called every few seconds from frontend)
+ */
+public function streamLocation(Request $request)
+{
+    $request->validate([
+        'lat' => 'required|numeric|between:-90,90',
+        'lng' => 'required|numeric|between:-180,180',
+    ]);
+
+    $user = $request->user();
+    
+    if ($user->role !== 'passenger') {
+        return response()->json(['error' => 'Only passengers can stream location'], 403);
+    }
+
+    $user->update([
+        'current_lat' => $request->lat,
+        'current_lng' => $request->lng,
+        'last_location_update' => now(),
+    ]);
+
+    if ($user->status) {
+        broadcast(new PassengerLocationUpdated($user))->toOthers();
+    }
+
+    // Get active ride if exists
+    $activeRide = Ride::where('passenger_id', $user->id)
+        ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
+        ->with('driver.user')
+        ->first();
+
+    return response()->json([
+        'message' => 'Location streamed',
+        'has_active_ride' => $activeRide ? true : false,
+        'ride_status' => $activeRide?->status,
+        'driver' => $activeRide ? [
+            'name' => $activeRide->driver->user->name,
+            'phone' => $activeRide->driver->user->phone,
+            'lat' => $activeRide->driver->current_driver_lat,
+            'lng' => $activeRide->driver->current_driver_lng,
+        ] : null,
+    ]);
+}
+
+    /**
      * Get all rides for authenticated passenger
      */
     public function myRides(Request $request)

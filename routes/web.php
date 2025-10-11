@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\RideController;
 use App\Http\Controllers\PassengerController;
 use Illuminate\Support\Facades\Mail;
 use App\Http\Controllers\Admin\PassengerController as AdminPassengerController;
+use Illuminate\Support\Facades\Broadcast;
 
 use Illuminate\Http\Request;
 
@@ -17,6 +18,7 @@ use Illuminate\Http\Request;
 | Public Routes
 |--------------------------------------------------------------------------
 */
+Broadcast::routes(['middleware' => ['auth:sanctum']]);
 
 // Home page - accessible by anyone
 Route::get('/', function () {

@@ -15,7 +15,7 @@ class DashboardController extends Controller
         $totalUsers = User::count();
         $totalDrivers = Driver::count();
         $totalRides = Ride::count();
-        $activeRides = Ride::where('status', 'ongoing')->count();
+        $activeRides = Ride::where('status', 'in_progress')->count();
 
         return view('admin.dashboard', compact(
             'totalUsers',
