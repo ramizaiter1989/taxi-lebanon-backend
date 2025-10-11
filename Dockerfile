@@ -1,5 +1,16 @@
+# Node.js build stage
+FROM node:18 AS node-builder
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# PHP Stage
 FROM php:8.2-apache
 
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     git curl libpng-dev libonig-dev libxml2-dev zip unzip \
     && docker-php-ext-install pdo pdo_mysql bcmath
@@ -11,9 +22,17 @@ RUN a2enmod rewrite
 RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf
 
 WORKDIR /var/www/html
+
+# Copy application files
 COPY . .
 
+# Copy built Vite assets from node-builder stage
+COPY --from=node-builder /app/public/build ./public/build
+
+# Install PHP dependencies
 RUN composer install --optimize-autoloader --no-dev
+
+# Set permissions
 RUN chown -R www-data:www-data storage bootstrap/cache
 RUN chmod -R 775 storage bootstrap/cache
 
@@ -23,5 +42,8 @@ RUN cp .env.example .env || true
 # Generate key
 RUN php artisan key:generate --force
 
-# Show errors in logs
-CMD bash -c "apache2-foreground 2>&1 | tee /var/log/apache2/combined.log"
+# Expose port
+EXPOSE 80
+
+# Start Apache
+CMD ["apache2-foreground"]

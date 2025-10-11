@@ -7,7 +7,7 @@ export default defineConfig({
     port: 5173,
     https: false, // 🚫 disable https for local dev
     hmr: {
-      host: 'localhost',
+      host: 'https://taxi-lebanon-backend-production.up.railway.app/',
       protocol: 'ws', // use ws instead of wss
     },
   },
