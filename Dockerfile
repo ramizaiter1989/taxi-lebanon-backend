@@ -1,4 +1,3 @@
-# Use the official PHP image with Apache
 FROM php:8.2-apache
 
 # Install system dependencies
@@ -18,6 +17,12 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Set ServerName to suppress warning
 RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
+# Enable Apache rewrite module
+RUN a2enmod rewrite
+
+# Configure Apache to serve Laravel from the public directory
+RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf
+
 # Copy the project files
 WORKDIR /var/www/html
 COPY . .
@@ -28,6 +33,3 @@ RUN composer install --optimize-autoloader --no-dev
 # Set permissions for Laravel
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
 RUN chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
-
-# Enable Apache rewrite module
-RUN a2enmod rewrite
