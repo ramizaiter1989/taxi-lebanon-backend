@@ -1,18 +1,18 @@
-# Node.js build stage - Use Node 23
+# Node.js build stage
 FROM node:23 AS node-builder
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
-
-# Install dependencies
 RUN npm install
 
-# Copy necessary files for Vite build
+# Copy config files
 COPY vite.config.js ./
-COPY postcss.config.js ./postcss.config.js 2>/dev/null || true
-COPY tailwind.config.js ./tailwind.config.js 2>/dev/null || true
+COPY postcss.config.js ./
+COPY tailwind.config.js ./
+
+# Copy source files
 COPY resources ./resources
 COPY public ./public
 

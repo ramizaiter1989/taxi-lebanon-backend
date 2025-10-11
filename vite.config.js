@@ -7,13 +7,13 @@ export default defineConfig({
     port: 5173,
     https: false, // 🚫 disable https for local dev
     hmr: {
-      host: 'https://taxi-lebanon-backend-production.up.railway.app/',
+      host: 'localhost',
       protocol: 'ws', // use ws instead of wss
     },
   },
   plugins: [
     laravel({
-      input: ['resources/css/app.css', 'resources/js/app.js'],
+      input: ['resources/css/app.css', 'resources/js/app.jsx'],
       refresh: true,
     }),
   ],
