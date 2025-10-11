@@ -20,7 +20,7 @@ service = "web"
 [env]
 APP_ENV = "production"
 APP_DEBUG = "false"
-APP_KEY = "base64:c5WiXFDnYQjmqWcZYTOgb5eiwSLClFn/gxawGcIVWxk="
+APP_KEY = "base64:b5/QNV+tC50OQ9ypDw9PlGHS0T/X2/dB6cDkKKqeq8w="
 APP_URL = "https://your-laravel-app.up.railway.app"
 
 DB_CONNECTION = "mysql"
