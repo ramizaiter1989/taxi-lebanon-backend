@@ -7,9 +7,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use App\Models\User;
+use App\Traits\SendsOtpSms;
 
 class AuthController extends Controller
 {
+    //otp function from trails
+    use SendsOtpSms;
     /**
      * Register a new user
      */
