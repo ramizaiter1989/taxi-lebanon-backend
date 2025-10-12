@@ -24,7 +24,9 @@ class RideObserver
 
                     // Create or update pickup duration in ride_logs
                     $log = $ride->rideLogs()->latest()->first() ?? new RideLog(['ride_id' => $ride->id]);
-                    $log->pickup_duration_seconds = $ride->accepted_at->diffInSeconds($ride->created_at);
+                    $createdAt = $ride->created_at instanceof Carbon ? $ride->created_at : Carbon::parse($ride->created_at);
+                    $acceptedAt = $ride->accepted_at instanceof Carbon ? $ride->accepted_at : Carbon::parse($ride->accepted_at);
+                    $log->pickup_duration_seconds = $acceptedAt->diffInSeconds($createdAt);
                     $log->save();
                     break;
 
@@ -39,7 +41,11 @@ class RideObserver
                     $log = $ride->rideLogs()->latest()->first();
                     if ($log) {
                         if ($ride->started_at) {
-                            $log->trip_duration_seconds = $ride->arrived_at->diffInSeconds($ride->started_at);
+                            $arrivedAt = $ride->arrived_at instanceof Carbon ? $ride->arrived_at : ($ride->arrived_at ? Carbon::parse($ride->arrived_at) : null);
+                            $startedAt = $ride->started_at instanceof Carbon ? $ride->started_at : ($ride->started_at ? Carbon::parse($ride->started_at) : null);
+                            if ($arrivedAt && $startedAt) {
+                                $log->trip_duration_seconds = $arrivedAt->diffInSeconds($startedAt);
+                            }
                         }
                         $log->total_duration_seconds =
                             ($log->pickup_duration_seconds ?? 0) +

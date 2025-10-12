@@ -13,33 +13,59 @@ class AuthController extends Controller
     /**
      * Register a new user
      */
-    public function register(Request $request)
-    {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
-            'phone' => 'nullable|string|max:20|unique:users',
-            'role' => 'required|in:passenger,driver',
-            'gender' => 'nullable|in:male,female',
+   public function register(Request $request)
+{
+    $validated = $request->validate([
+        'name' => 'required|string|max:255',
+        'email' => 'required|string|email|max:255|unique:users',
+        'password' => 'required|string|min:8|confirmed',
+        'phone' => 'nullable|string|max:20|unique:users',
+        'role' => 'required|in:passenger,driver',
+        'gender' => 'nullable|in:male,female',
+    ]);
+
+    // 1️⃣ Create user
+    $user = User::create([
+        'name' => $validated['name'],
+        'email' => $validated['email'],
+        'password' => Hash::make($validated['password']),
+        'phone' => $validated['phone'] ?? null,
+        'role' => $validated['role'],
+        'gender' => $validated['gender'] ?? 'female',
+    ]);
+
+    // 2️⃣ Fire email verification event (if User implements MustVerifyEmail)
+    event(new \Illuminate\Auth\Events\Registered($user));
+
+    // 3️⃣ Generate OTP and store in DB
+    if ($user->phone) {
+        $otpCode = rand(100000, 999999);
+
+        \App\Models\Otp::create([
+            'phone' => $user->phone,
+            'code' => $otpCode,
+            'expires_at' => now()->addMinutes(5),
         ]);
 
-        $user = User::create([
-            'name' => $validated['name'],
-            'email' => $validated['email'],
-            'password' => Hash::make($validated['password']),
-            'phone' => $validated['phone'] ?? null,
-            'role' => $validated['role'],
-            'gender' => $validated['gender'] ?? 'female',
-        ]);
-
-        $token = $user->createToken('auth_token')->plainTextToken;
-
-        return response()->json([
-            'token' => $token,
-            'user' => $user,
-        ], 201);
+        // 4️⃣ Send OTP via Vonage
+        try {
+            $this->sendSms($user->phone, $otpCode); // make sure this controller uses SendsOtpSms trait
+        } catch (\Exception $e) {
+            \Log::error("OTP SMS failed: " . $e->getMessage());
+            // optional: continue without failing registration
+        }
     }
+
+    // 5️⃣ Generate API token
+    $token = $user->createToken('auth_token')->plainTextToken;
+
+    return response()->json([
+        'message' => 'Registration successful. Please verify your email and enter the OTP sent to your phone.',
+        'token' => $token,
+        'user' => $user,
+    ], 201);
+}
+
 
     /**
      * Login user

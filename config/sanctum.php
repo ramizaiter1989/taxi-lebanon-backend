@@ -3,7 +3,7 @@
 use Laravel\Sanctum\Sanctum;
 
 return [
-    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', 'https://taxi-lebanon-backend-production.up.railway.app,gondola.proxy.rlwy.net,localhost,127.0.0.1')),
+    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', 'https://taxi-lebanon-backend.onrender.com,gondola.proxy.rlwy.net,localhost,127.0.0.1')),
     'guard' => ['web'],
     'expiration' => null,
     'token_prefix' => env('SANCTUM_TOKEN_PREFIX', ''),

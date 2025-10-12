@@ -13,8 +13,8 @@
 [env]
   APP_ENV = "production"
   APP_DEBUG = "false"
-  APP_URL = "https://taxi-lebanon-backend-production.up.railway.app"
-  SANCTUM_STATEFUL_DOMAINS = "taxi-lebanon-backend-production.up.railway.app,gondola.proxy.rlwy.net,localhost,127.0.0.1"
+  APP_URL = "https://taxi-lebanon-backend.onrender.com"
+  SANCTUM_STATEFUL_DOMAINS = "taxi-lebanon-backend.onrender.com,gondola.proxy.rlwy.net,localhost,127.0.0.1"
   DB_CONNECTION = "mysql"
   DB_HOST = "gondola.proxy.rlwy.net"
   DB_PORT = "47771"
