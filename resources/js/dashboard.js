@@ -5,6 +5,18 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
+import polyline from '@mapbox/polyline';
+
+// Make polyline globally available
+window.polyline = polyline;
+
+// Fix default Leaflet marker icons for production
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+    iconRetinaUrl: '/images/marker-icon-2x.png',
+    iconUrl: '/images/marker-icon.png',
+    shadowUrl: '/images/marker-shadow.png',
+});
 
 // Initialize Laravel Echo
 window.Echo = new Echo({
@@ -23,7 +35,7 @@ window.Echo = new Echo({
 });
 window.Pusher = Pusher;
 
-// Icons
+// ======================== ICONS ========================
 const icons = {
     driver: L.icon({
         iconUrl: '/images/car-icon.png',
@@ -61,300 +73,91 @@ const icons = {
     })
 };
 
-// Global variables
-let map;
-let clusterGroup;
+// ======================== GLOBAL VARIABLES ========================
+let map, clusterGroup;
 let selfMarker = null;
 let accuracyCircle = null;
 let destinationMarker = null;
 let routePolyline = null;
 let selectedDestination = null;
-let rideInfo = {
-    distance: null,
-    duration: null,
-    destination_lat: null,
-    destination_lng: null
-};
+let rideInfo = { distance: null, duration: null, destination_lat: null, destination_lng: null };
 let currentRideId = null;
 let activeRideMarkers = {};
 let passengerTrackingMarker = null;
 let driverTrackingMarker = null;
 let allMarkers = {};
 let watchId = null;
-// User info
-let userRole;
-let userId;
-let driverId;
-let userIcon;
+let userRole = window.userRole;
+let userId = window.userId;
+let driverId = window.driverId;
+let userIcon = userRole === 'admin' ? icons.admin : userRole === 'driver' ? icons.driver : icons.passenger;
 
-// Helper Functions
+// ======================== HELPER FUNCTIONS ========================
 function showNotification(message, type = 'info') {
     const notification = document.createElement('div');
     notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg z-[9999] transition-opacity duration-300`;
-
-    if (type === 'success') {
-        notification.className += ' bg-green-500 text-white';
-    } else if (type === 'error') {
-        notification.className += ' bg-red-500 text-white';
-    } else {
-        notification.className += ' bg-blue-500 text-white';
-    }
-
+    if (type === 'success') notification.className += ' bg-green-500 text-white';
+    else if (type === 'error') notification.className += ' bg-red-500 text-white';
+    else notification.className += ' bg-blue-500 text-white';
     notification.textContent = message;
     document.body.appendChild(notification);
-
     setTimeout(() => {
         notification.style.opacity = '0';
         setTimeout(() => notification.remove(), 300);
     }, 3000);
 }
 
-function setDestination(lat, lng) {
-    if (!selfMarker) {
-        showNotification('Please wait for your location to be detected', 'error');
-        return;
-    }
-    if (destinationMarker) {
-        map.removeLayer(destinationMarker);
-    }
-    if (routePolyline) {
-        map.removeLayer(routePolyline);
-    }
-    destinationMarker = L.marker([lat, lng], { icon: icons.destination })
-        .bindPopup('<b>Destination</b><br>Calculating route...')
-        .addTo(map);
-    selectedDestination = { lat, lng };
-    rideInfo.destination_lat = lat;
-    rideInfo.destination_lng = lng;
-    fetchRoute(selfMarker.getLatLng().lat, selfMarker.getLatLng().lng, lat, lng);
-}
-
-function fetchRoute(startLat, startLng, endLat, endLng, color = '#3b82f6') {
-    const start = `${startLng},${startLat}`;
-    const end = `${endLng},${endLat}`;
-    showNotification('Calculating route...', 'info');
-    fetch(`/api/directions?start=${start}&end=${end}`, {
-        headers: {
-            'Authorization': `Bearer ${window.apiToken}`,
-            'Accept': 'application/json',
-        }
-    })
-    .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch route');
-        return res.json();
-    })
-    .then(data => {
-        if (data.features && data.features[0]) {
-            const route = data.features[0];
-            const coords = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
-
-            if (routePolyline) {
-                map.removeLayer(routePolyline);
-            }
-            routePolyline = L.polyline(coords, {
-                color: color,
-                weight: 4,
-                opacity: 0.7
-            }).addTo(map);
-
-            const distance = route.properties.segments[0].distance;
-            const duration = route.properties.segments[0].duration;
-
-            rideInfo.distance = distance;
-            rideInfo.duration = duration;
-            const distanceKm = (distance / 1000).toFixed(2);
-            const durationMin = Math.ceil(duration / 60);
-
-            if (userRole === 'passenger' && destinationMarker) {
-                fetch('/api/rides/estimate-fare', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${window.apiToken}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        distance: distanceKm,
-                        duration: durationMin
-                    })
-                })
-                .then(res => res.json())
-                .then(fareData => {
-                    if (destinationMarker) {
-                        destinationMarker.setPopupContent(
-                            `<b>Destination</b><br>
-                            Distance: ${distanceKm} km<br>
-                            Duration: ${durationMin} min<br>
-                            Estimated Fare: $${fareData.estimated_fare}<br>
-                            <button onclick="window.requestRide()" class="mt-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
-                                Request Ride
-                            </button>`
-                        );
-                    }
-                })
-                .catch(() => {
-                    if (destinationMarker) {
-                        destinationMarker.setPopupContent(
-                            `<b>Destination</b><br>
-                            Distance: ${distanceKm} km<br>
-                            Duration: ${durationMin} min<br>
-                            <button onclick="window.requestRide()" class="mt-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
-                                Request Ride
-                            </button>`
-                        );
-                    }
-                });
-            }
-
-            map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
-            showNotification(`Route found: ${distanceKm} km, ${durationMin} min`, 'success');
-        } else {
-            throw new Error('No route found');
-        }
-    })
-    .catch(err => {
-        console.error('Error fetching route:', err);
-        showNotification('Failed to calculate route. Please try again.', 'error');
-        if (destinationMarker) {
-            destinationMarker.setPopupContent('<b>Destination</b><br>Route calculation failed');
-        }
-    });
-}
-
-
-function displayRideRequest(rideData) {
-    const rideKey = `ride-${rideData.id}`;
-
-    // Remove old markers if they exist
-    if (activeRideMarkers[rideKey]) {
-        if (activeRideMarkers[rideKey].pickup) map.removeLayer(activeRideMarkers[rideKey].pickup);
-        if (activeRideMarkers[rideKey].destination) map.removeLayer(activeRideMarkers[rideKey].destination);
-        if (activeRideMarkers[rideKey].route) map.removeLayer(activeRideMarkers[rideKey].route);
-    }
-    // Create pickup marker
-    const pickupMarker = L.marker([rideData.origin_lat, rideData.origin_lng], {
-        icon: icons.pickup
-    }).addTo(map);
-    // Create destination marker
-    const destMarker = L.marker([rideData.destination_lat, rideData.destination_lng], {
-        icon: icons.destination
-    }).addTo(map);
-    // Calculate distance from driver to pickup
-    const driverPos = selfMarker ? selfMarker.getLatLng() : null;
-    let distanceToPickup = '';
-    if (driverPos) {
-        const dist = map.distance(driverPos, [rideData.origin_lat, rideData.origin_lng]) / 1000;
-        distanceToPickup = `<br>Distance to pickup: ${dist.toFixed(2)} km`;
-    }
-    pickupMarker.bindPopup(`
-    <b>Ride Request #${rideData.id}</b><br>
-    Passenger: ${rideData.passenger?.name || 'Unknown'}${distanceToPickup}<br>
-    <button onclick="window.acceptRide(${rideData.id})" class="mt-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
-        Accept Ride
-    </button>
-    `).openPopup();
-
-    // Draw route between pickup and destination
-    let routeLine = L.polyline([
-        [rideData.origin_lat, rideData.origin_lng],
-        [rideData.destination_lat, rideData.destination_lng]
-    ], {
-        color: '#10b981',
-        weight: 3,
-        opacity: 0.6,
-        dashArray: '10, 10'
-    }).addTo(map);
-    activeRideMarkers[rideKey] = {
-        pickup: pickupMarker,
-        destination: destMarker,
-        route: routeLine
-    };
-    // Fit bounds to show the entire ride
-    const bounds = L.latLngBounds([
-        [rideData.origin_lat, rideData.origin_lng],
-        [rideData.destination_lat, rideData.destination_lng]
-    ]);
-    if (driverPos) bounds.extend(driverPos);
-    map.fitBounds(bounds, { padding: [50, 50] });
-}
-
-
-function createPassengerTracker(rideData) {
-    if (passengerTrackingMarker) {
-        map.removeLayer(passengerTrackingMarker);
-    }
-
-    if (rideData.origin_lat && rideData.origin_lng) {
-        passengerTrackingMarker = L.marker([rideData.origin_lat, rideData.origin_lng], {
-            icon: icons.passenger
-        })
-        .bindPopup('<b>Passenger Location</b>')
-        .addTo(map);
-    }
-}
-
 function updateLocationStatus(status, text) {
     const indicator = document.getElementById('status-indicator');
     const statusText = document.getElementById('status-text');
+    if (!indicator || !statusText) return;
 
-    if (indicator && statusText) {
-        if (status === 'active') {
-            indicator.classList.add('active');
-            statusText.textContent = text || 'Location Active';
-            statusText.classList.remove('text-gray-600');
-            statusText.classList.add('text-green-600');
-        } else if (status === 'error') {
-            indicator.classList.remove('active');
-            indicator.style.backgroundColor = '#ef4444';
-            statusText.textContent = text || 'Location Error';
-            statusText.classList.remove('text-gray-600', 'text-green-600');
-            statusText.classList.add('text-red-600');
-        } else {
-            indicator.classList.remove('active');
-            statusText.textContent = text || 'Connecting...';
-        }
+    if (status === 'active') {
+        indicator.classList.add('active');
+        statusText.textContent = text || 'Location Active';
+        statusText.classList.remove('text-gray-600');
+        statusText.classList.add('text-green-600');
+    } else if (status === 'error') {
+        indicator.classList.remove('active');
+        indicator.style.backgroundColor = '#ef4444';
+        statusText.textContent = text || 'Location Error';
+        statusText.classList.remove('text-gray-600', 'text-green-600');
+        statusText.classList.add('text-red-600');
+    } else {
+        indicator.classList.remove('active');
+        statusText.textContent = text || 'Connecting...';
     }
 }
 
-function updateUserLocation(latitude, longitude, accuracy) {
-    const newLatLng = [latitude, longitude];
+function updateUserLocation(lat, lng, accuracy = 50) {
+    const newLatLng = [lat, lng];
     if (selfMarker) {
         selfMarker.setLatLng(newLatLng);
-        if (accuracyCircle) {
-            accuracyCircle.setLatLng(newLatLng);
-            accuracyCircle.setRadius(accuracy || 50);
-        }
+        if (accuracyCircle) accuracyCircle.setLatLng(newLatLng).setRadius(accuracy);
     } else {
         selfMarker = L.marker(newLatLng, { icon: userIcon })
-            .bindPopup(`<b>You (${userRole}):</b> ${window.userLocation?.name || 'Current Location'}`)
-            .addTo(map);
+            .bindPopup(`<b>You (${userRole}):</b> ${window.userLocation?.name || 'Current Location'}`);
         allMarkers['self'] = selfMarker;
         clusterGroup.addLayer(selfMarker);
         selfMarker.setZIndexOffset(1000);
         accuracyCircle = L.circle(newLatLng, {
-            radius: accuracy || 50,
+            radius: accuracy,
             color: '#4285F4',
             fillColor: '#4285F4',
             fillOpacity: 0.1,
             weight: 2
         }).addTo(map);
     }
+
     let endpoint, payload;
     if (userRole === 'driver') {
         endpoint = `/api/drivers/${driverId}/location`;
-        payload = {
-            current_driver_lat: latitude,
-            current_driver_lng: longitude
-        };
+        payload = { current_driver_lat: lat, current_driver_lng: lng };
     } else if (userRole === 'passenger') {
         endpoint = '/api/passenger/location';
-        payload = {
-            lat: latitude,
-            lng: longitude
-        };
-    } else {
-        return;
-    }
+        payload = { lat, lng };
+    } else return;
+
     fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -364,335 +167,35 @@ function updateUserLocation(latitude, longitude, accuracy) {
         },
         body: JSON.stringify(payload)
     })
-    .then(response => {
-        if (!response.ok) {
-            return response.json().then(err => {
-                console.error('Location update error:', err);
-                throw new Error(err.message || 'Failed to update location');
-            });
-        }
-        return response.json();
+    .then(res => {
+        if (!res.ok) throw new Error('Failed to update location');
+        updateLocationStatus('active', 'Location Active');
     })
-    .then(() => updateLocationStatus('active', 'Location Active'))
     .catch(err => {
         console.error('Error updating location:', err);
         updateLocationStatus('error', 'Update Failed');
     });
 }
 
-// Global window functions
-window.requestRide = function() {
-    if (currentRideId) {
-        showNotification('You already have an active ride. Please complete or cancel it first.', 'error');
-        return;
-    }
-    if (!selectedDestination || !selfMarker) {
-        showNotification('Please select a destination first', 'error');
-        return;
-    }
-    const pickup = selfMarker.getLatLng();
-
-    const rideData = {
-        origin_lat: pickup.lat,
-        origin_lng: pickup.lng,
-        destination_lat: selectedDestination.lat,
-        destination_lng: selectedDestination.lng
-    };
-    showNotification('Creating ride request...', 'info');
-    fetch('/api/rides', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${window.apiToken}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content
-        },
-        body: JSON.stringify(rideData)
-    })
-    .then(res => {
-        if (!res.ok) {
-            return res.json().then(err => {
-                throw new Error(err.message || 'Failed to create ride request');
-            });
-        }
-        return res.json();
-    })
-    .then(data => {
-        currentRideId = data.id;
-        showNotification('Ride request created! Waiting for driver...', 'success');
-
-        if (destinationMarker) {
-            const distanceKm = (rideInfo.distance / 1000).toFixed(2);
-            const durationMin = Math.ceil(rideInfo.duration / 60);
-
-            destinationMarker.setPopupContent(
-                `<b>Destination</b><br>
-                Distance: ${distanceKm} km<br>
-                Duration: ${durationMin} min<br>
-                <div class="mt-2 text-blue-600 font-semibold">Waiting for driver...</div>
-                <button onclick="window.cancelRide()" class="mt-2 bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 text-sm">
-                    Cancel Request
-                </button>`
-            );
-        }
-    })
-    .catch(err => {
-        console.error('Error creating ride request:', err);
-        showNotification(err.message || 'Failed to create ride request', 'error');
-    });
-};
-
-window.cancelRide = function() {
-    if (!currentRideId) return;
-    if (!confirm('Are you sure you want to cancel this ride?')) return;
-    fetch(`/api/rides/${currentRideId}/cancel`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${window.apiToken}`,
-            'Accept': 'application/json',
-        }
-    })
-    .then(res => res.json())
-    .then(() => {
-        showNotification('Ride cancelled successfully', 'info');
-        currentRideId = null;
-        if (destinationMarker) map.removeLayer(destinationMarker);
-        if (routePolyline) map.removeLayer(routePolyline);
-        if (driverTrackingMarker) {
-            map.removeLayer(driverTrackingMarker);
-            driverTrackingMarker = null;
-        }
-        destinationMarker = null;
-        routePolyline = null;
-        selectedDestination = null;
-        // Re-enable Request Ride buttons
-        document.querySelectorAll('button').forEach(btn => {
-            if (btn.textContent.includes('Request Ride')) {
-                btn.disabled = false;
-                btn.classList.remove('opacity-50', 'cursor-not-allowed');
-            }
-        });
-    })
-    .catch(err => {
-        console.error('Error cancelling ride:', err);
-        showNotification('Failed to cancel ride', 'error');
-    });
-};
-
-window.acceptRide = function(rideId) {
-    console.log('Accepting ride with ID:', rideId); // Debug log
-    if (!rideId) {
-        showNotification('Invalid ride ID', 'error');
-        return;
-    }
-    showNotification('Accepting ride...', 'info');
-    fetch(`/api/rides/${rideId}/accept`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${window.apiToken}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        }
-    })
-    .then(res => {
-        if (!res.ok) {
-            return res.json().then(err => {
-                throw new Error(err.message || 'Failed to accept ride');
-            });
-        }
-        return res.json();
-    })
-    .then(data => {
-        showNotification('Ride accepted! Navigate to passenger.', 'success');
-        currentRideId = rideId;
-        // Remove the accepted ride from the map
-        const rideKey = `ride-${rideId}`;
-        if (activeRideMarkers[rideKey]) {
-            if (activeRideMarkers[rideKey].pickup) map.removeLayer(activeRideMarkers[rideKey].pickup);
-            if (activeRideMarkers[rideKey].destination) map.removeLayer(activeRideMarkers[rideKey].destination);
-            if (activeRideMarkers[rideKey].route) map.removeLayer(activeRideMarkers[rideKey].route);
-            delete activeRideMarkers[rideKey];
-        }
- // Fetch and display the route from driver to passenger pickup
-        const driverPos = selfMarker.getLatLng();
-        const pickupPos = [data.origin_lat, data.origin_lng];
-        const destinationPos = [data.destination_lat, data.destination_lng];
-
-        fetchRoute(driverPos.lat, driverPos.lng, pickupPos[0], pickupPos[1], '#FF5733'); // Orange route: Driver to Pickup
-        fetchRoute(pickupPos[0], pickupPos[1], destinationPos[0], destinationPos[1], '#33FF57'); // Green route: Pickup to Destination
-
-
-        // Fetch updated list of available rides
-        fetch('/api/rides/available', {
-            headers: {
-                'Authorization': `Bearer ${window.apiToken}`,
-                'Accept': 'application/json',
-            }
-        })
-        .then(res => res.json())
-        .then(rides => {
-            rides.forEach(ride => {
-                displayRideRequest(ride);
-            });
-        })
-        .catch(err => {
-            console.error('Error fetching available rides:', err);
-        });
-    })
-    .catch(err => {
-        console.error('Error accepting ride:', err);
-        showNotification(err.message || 'Failed to accept ride', 'error');
-    });
-};
-
-
-window.markArrived = function(rideId) {
-    fetch(`/api/rides/${rideId}/arrived`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${window.apiToken}`,
-            'Accept': 'application/json',
-        }
-    })
-    .then(res => res.json())
-    .then(data => {
-        showNotification(`Ride completed! Fare: $${data.fare}`, 'success');
-        currentRideId = null;
-        const rideKey = `ride-${rideId}`;
-        if (activeRideMarkers[rideKey]) {
-            if (activeRideMarkers[rideKey].pickup) map.removeLayer(activeRideMarkers[rideKey].pickup);
-            if (activeRideMarkers[rideKey].destination) map.removeLayer(activeRideMarkers[rideKey].destination);
-            if (activeRideMarkers[rideKey].route) map.removeLayer(activeRideMarkers[rideKey].route);
-            delete activeRideMarkers[rideKey];
-        }
-        if (passengerTrackingMarker) {
-            map.removeLayer(passengerTrackingMarker);
-            passengerTrackingMarker = null;
-        }
-        // Re-enable Request Ride buttons
-        document.querySelectorAll('button').forEach(btn => {
-            if (btn.textContent.includes('Request Ride')) {
-                btn.disabled = false;
-                btn.classList.remove('opacity-50', 'cursor-not-allowed');
-            }
-        });
-    })
-    .catch(err => {
-        console.error('Error marking arrived:', err);
-        showNotification('Failed to complete ride', 'error');
-    });
-};
-
-// Initialize Everything
+// ======================== MAP INITIALIZATION ========================
 document.addEventListener('DOMContentLoaded', () => {
-    // Set user info
-    userRole = window.userRole;
-    userId = window.userId;
-    driverId = window.driverId;
-    userIcon = userRole === 'admin' ? icons.admin :
-               userRole === 'driver' ? icons.driver :
-               icons.passenger;
-    // Initialize map
-    map = L.map('map').setView([34.1657, 35.9515], 8);
+    const defaultLat = 34.1657, defaultLng = 35.9515;
+    const initLat = window.userLocation?.lat || defaultLat;
+    const initLng = window.userLocation?.lng || defaultLng;
+
+    map = L.map('map').setView([initLat, initLng], 12);
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
+        attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
+
     clusterGroup = L.markerClusterGroup();
     map.addLayer(clusterGroup);
 
-    // Location Tracking Control
-    const LocationControl = L.Control.extend({
-        options: { position: 'topleft' },
-        onAdd: function(m) {
-            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
-            const button = L.DomUtil.create('a', 'location-button', container);
-            button.innerHTML = '📍';
-            button.href = '#';
-            button.title = 'Center on my location';
-            button.style.fontSize = '20px';
-            button.style.width = '34px';
-            button.style.height = '34px';
-            button.style.lineHeight = '30px';
-            button.style.textAlign = 'center';
-            button.style.textDecoration = 'none';
-            button.style.backgroundColor = 'white';
-            L.DomEvent.on(button, 'click', function(e) {
-                L.DomEvent.preventDefault(e);
-                if (selfMarker) {
-                    map.setView(selfMarker.getLatLng(), 16);
-                    selfMarker.openPopup();
-                }
-            });
-            return container;
-        }
-    });
-    map.addControl(new LocationControl());
-
-    // Destination Selection Control (Passengers Only)
-    if (userRole === 'passenger') {
-        const DestinationControl = L.Control.extend({
-            options: { position: 'topright' },
-            onAdd: function(m) {
-                const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
-                const button = L.DomUtil.create('a', 'destination-button', container);
-                button.innerHTML = '📍🎯';
-                button.href = '#';
-                button.title = 'Select destination';
-                button.style.fontSize = '20px';
-                button.style.width = '34px';
-                button.style.height = '34px';
-                button.style.lineHeight = '30px';
-                button.style.textAlign = 'center';
-                button.style.textDecoration = 'none';
-                button.style.backgroundColor = '#3b82f6';
-                button.style.color = 'white';
-                button.style.fontWeight = 'bold';
-                let isSelecting = false;
-                L.DomEvent.on(button, 'click', function(e) {
-                    L.DomEvent.preventDefault(e);
-
-                    if (currentRideId) {
-                        showNotification('You already have an active ride request', 'error');
-                        return;
-                    }
-
-                    isSelecting = !isSelecting;
-
-                    if (isSelecting) {
-                        button.style.backgroundColor = '#ef4444';
-                        map.getContainer().style.cursor = 'crosshair';
-                        showNotification('Tap anywhere on the map to set your destination', 'info');
-                    } else {
-                        button.style.backgroundColor = '#3b82f6';
-                        map.getContainer().style.cursor = '';
-                    }
-                });
-                map.on('click', function(e) {
-                    if (isSelecting && selfMarker) {
-                        const destLat = e.latlng.lat;
-                        const destLng = e.latlng.lng;
-
-                        setDestination(destLat, destLng);
-
-                        isSelecting = false;
-                        button.style.backgroundColor = '#3b82f6';
-                        map.getContainer().style.cursor = '';
-                    }
-                });
-                return container;
-            }
-        });
-        map.addControl(new DestinationControl());
-    }
-
-    // Initialize self marker if user location is available
+    // Self Marker
     if (window.userLocation) {
-        selfMarker = L.marker(
-            [window.userLocation.lat, window.userLocation.lng],
-            { icon: userIcon }
-        )
-        .bindPopup(`<b>You (${userRole}):</b> ${window.userLocation.name}`)
-        .openPopup();
+        selfMarker = L.marker([window.userLocation.lat, window.userLocation.lng], { icon: userIcon })
+            .bindPopup(`<b>You (${userRole}):</b> ${window.userLocation.name}`);
         allMarkers['self'] = selfMarker;
         clusterGroup.addLayer(selfMarker);
         selfMarker.setZIndexOffset(1000);
@@ -705,68 +208,42 @@ document.addEventListener('DOMContentLoaded', () => {
         }).addTo(map);
     }
 
-    // Real-time Location Tracking
+    // Geolocation tracking
     if (navigator.geolocation) {
         updateLocationStatus('connecting', 'Getting location...');
-
         navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const { latitude, longitude, accuracy } = position.coords;
-                updateUserLocation(latitude, longitude, accuracy);
-                map.setView([latitude, longitude], 15);
-                updateLocationStatus('active', 'Location Active');
+            pos => {
+                updateUserLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+                map.setView([pos.coords.latitude, pos.coords.longitude], 15);
             },
-            (error) => {
-                console.error('Error getting initial location:', error);
+            err => {
+                console.error('Error getting location:', err);
                 updateLocationStatus('error', 'Location Denied');
-                alert('Please enable location access to use this feature.');
+                alert('Enable location access to use the map.');
             },
             { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
         );
         watchId = navigator.geolocation.watchPosition(
-            (position) => {
-                const { latitude, longitude, accuracy } = position.coords;
-                updateUserLocation(latitude, longitude, accuracy);
-            },
-            (error) => {
-                console.error('Error watching location:', error);
-                updateLocationStatus('error', 'Tracking Error');
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: 5000,
-                maximumAge: 0,
-                distanceFilter: 10
-            }
+            pos => updateUserLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy),
+            err => console.error('Error watching location:', err),
+            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
         );
-    } else {
-        console.error('Geolocation is not supported by this browser.');
-        updateLocationStatus('error', 'Not Supported');
-        alert('Your browser does not support location tracking.');
     }
 
     window.addEventListener('beforeunload', () => {
-        if (watchId !== null) {
-            navigator.geolocation.clearWatch(watchId);
-        }
+        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
     });
 
     // Fetch initial live locations
     fetch('/api/admin/live-locations', {
-        headers: {
-            'Authorization': `Bearer ${window.apiToken}`,
-            'Accept': 'application/json',
-        },
+        headers: { 'Authorization': `Bearer ${window.apiToken}`, 'Accept': 'application/json' },
     })
     .then(res => res.json())
     .then(data => {
         const locations = Array.isArray(data) ? data : Object.values(data);
         locations.forEach(loc => {
             if (!loc.lat || !loc.lng || !loc.availability_status) return;
-            let icon;
-            if (loc.type === 'driver') icon = icons.driver;
-            else if (loc.type === 'passenger') icon = icons.passenger;
-            else if (loc.type === 'admin') icon = icons.admin;
+            let icon = icons[loc.type] || icons.passenger;
             const marker = L.marker([loc.lat, loc.lng], { icon })
                 .bindPopup(`<b>${loc.type.charAt(0).toUpperCase() + loc.type.slice(1)}:</b> ${loc.name}`);
             allMarkers[`${loc.type}-${loc.id}`] = marker;
