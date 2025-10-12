@@ -40,6 +40,14 @@ class AuthController extends Controller
     // 2️⃣ Fire email verification event (if User implements MustVerifyEmail)
     event(new \Illuminate\Auth\Events\Registered($user));
 
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        return response()->json([
+            'token' => $token,
+            'user' => $user,
+            'message' => 'Please verify your email via the link sent.',
+        ], 201);
+
     // 3️⃣ Generate OTP and store in DB
     if ($user->phone) {
         $otpCode = rand(100000, 999999);
