@@ -41,7 +41,7 @@ public function sendOtp(Request $request)
 
     try {
         $this->sendSms($request->phone, $otpCode);
-    } catch (\Exception $e) {
+    } catch (Exception $e) {
         Log::error("OTP SMS failed: " . $e->getMessage());
         return response()->json(['error' => 'Failed to send OTP. Please try again later.'], 500);
     }
@@ -70,7 +70,7 @@ public function resendOtp(Request $request)
 
     try {
     $this->sendSms($request->phone, $otpCode);
-} catch (\Exception $e) {
+} catch (Exception $e) {
     return response()->json(['error' => $e->getMessage()], 500);
 }
 
@@ -119,7 +119,7 @@ private function sendSms($phone, $otpCode)
     ]);
 
     if ($message->getStatus() != 0) {
-        throw new \Exception("Vonage SMS failed with status: " . $message->getStatus());
+        throw new Exception("Vonage SMS failed with status: " . $message->getStatus());
     }
 }
 
