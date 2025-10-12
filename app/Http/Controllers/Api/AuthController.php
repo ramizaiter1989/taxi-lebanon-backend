@@ -16,7 +16,7 @@ class AuthController extends Controller
     /**
      * Register a new user
      */
-   public function register(Request $request)
+public function register(Request $request)
 {
     $validated = $request->validate([
         'name' => 'required|string|max:255',
@@ -37,18 +37,10 @@ class AuthController extends Controller
         'gender' => $validated['gender'] ?? 'female',
     ]);
 
-    // 2️⃣ Fire email verification event (if User implements MustVerifyEmail)
+    // 2️⃣ Fire email verification event
     event(new \Illuminate\Auth\Events\Registered($user));
 
-        $token = $user->createToken('auth_token')->plainTextToken;
-
-        return response()->json([
-            'token' => $token,
-            'user' => $user,
-            'message' => 'Please verify your email via the link sent.',
-        ], 201);
-
-    // 3️⃣ Generate OTP and store in DB
+    // 3️⃣ Generate OTP if phone exists
     if ($user->phone) {
         $otpCode = rand(100000, 999999);
 
@@ -60,16 +52,16 @@ class AuthController extends Controller
 
         // 4️⃣ Send OTP via Vonage
         try {
-            $this->sendSms($user->phone, $otpCode); // make sure this controller uses SendsOtpSms trait
+            $this->sendSms($user->phone, $otpCode);
         } catch (\Exception $e) {
             \Log::error("OTP SMS failed: " . $e->getMessage());
-            // optional: continue without failing registration
         }
     }
 
     // 5️⃣ Generate API token
     $token = $user->createToken('auth_token')->plainTextToken;
 
+    // ✅ Return response after OTP is sent
     return response()->json([
         'message' => 'Registration successful. Please verify your email and enter the OTP sent to your phone.',
         'token' => $token,
@@ -77,39 +69,6 @@ class AuthController extends Controller
     ], 201);
 }
 
-
-    /**
-     * Login user
-     */
-    public function login(Request $request)
-    {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-        ]);
-
-        $user = User::where('email', $request->email)->first();
-
-        if (!$user || !Hash::check($request->password, $user->password)) {
-            return response()->json([
-                'message' => 'Invalid credentials'
-            ], 401);
-        }
-
-        // Check if account is locked
-        if ($user->is_locked) {
-            return response()->json([
-                'message' => 'Your account has been locked. Please contact support.'
-            ], 403);
-        }
-
-        $token = $user->createToken('auth_token')->plainTextToken;
-
-        return response()->json([
-            'token' => $token,
-            'user' => $user,
-        ]);
-    }
 
     /**
      * Logout user
