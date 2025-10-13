@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\URL;
 use App\Models\Ride;
 use App\Observers\RideObserver;
 use App\Services\GeocodingService;
+use App\Services\RouteService;
+
 class AppServiceProvider extends ServiceProvider
 {
     /**
@@ -16,6 +18,9 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->singleton(GeocodingService::class, function ($app) {
             return new GeocodingService();
+        });
+        $this->app->singleton(RouteService::class, function ($app) {
+            return new RouteService();
         });
     }
 
