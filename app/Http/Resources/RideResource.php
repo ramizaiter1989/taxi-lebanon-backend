@@ -26,11 +26,19 @@ class RideResource extends JsonResource
 
         // Calculate trip time (origin to destination)
         $tripTime = $routeService->getRouteInfo(
-            $this->origin_lng,
-            $this->origin_lat,
-            $this->destination_lng,
-            $this->destination_lat
-        );
+                $this->origin_lng,
+                $this->origin_lat,
+                $this->destination_lng,
+                $this->destination_lat
+            );
+
+            // Fallback if trip time is null
+            if (!$tripTime) {
+                $tripTime = [
+                    'distance' => 5000, // 5 km fallback
+                    'duration' => 600,  // 10 minutes fallback
+                ];
+            }
 
         return [
             'id' => $this->id,
@@ -69,13 +77,13 @@ class RideResource extends JsonResource
                     ] : null,
                 ];
             }),
-            'trip' => [
-                'time' => $tripTime ? [
-                    'distance' => $tripTime['distance'],
-                    'duration' => $tripTime['duration'],
-                    'duration_text' => $tripTime['duration'] ? gmdate("i:s", $tripTime['duration']) : null,
-                ] : null,
-            ],
+                'trip' => [
+                    'time' => [
+                        'distance' => $tripTime['distance'],
+                        'duration' => $tripTime['duration'],
+                        'duration_text' => gmdate("i:s", round($tripTime['duration'])),
+                    ],
+                ],
             'passenger' => $this->whenLoaded('passenger', function() {
                 return [
                     'id' => $this->passenger->id,
