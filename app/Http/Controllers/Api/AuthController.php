@@ -4,70 +4,71 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use App\Models\User;
 use App\Traits\SendsOtpSms;
+use Exception;
 
 class AuthController extends Controller
 {
     //otp function from trails
     use SendsOtpSms;
+    
     /**
      * Register a new user
      */
-public function register(Request $request)
-{
-    $validated = $request->validate([
-        'name' => 'required|string|max:255',
-        'email' => 'required|string|email|max:255|unique:users',
-        'password' => 'required|string|min:8|confirmed',
-        'phone' => 'nullable|string|max:20|unique:users',
-        'role' => 'required|in:passenger,driver',
-        'gender' => 'nullable|in:male,female',
-    ]);
-
-    // 1️⃣ Create user
-    $user = User::create([
-        'name' => $validated['name'],
-        'email' => $validated['email'],
-        'password' => Hash::make($validated['password']),
-        'phone' => $validated['phone'] ?? null,
-        'role' => $validated['role'],
-        'gender' => $validated['gender'] ?? 'female',
-    ]);
-
-    // 2️⃣ Fire email verification event
-    event(new \Illuminate\Auth\Events\Registered($user));
-
-    // 3️⃣ Generate OTP if phone exists
-    if ($user->phone) {
-        $otpCode = rand(100000, 999999);
-
-        \App\Models\Otp::create([
-            'phone' => $user->phone,
-            'code' => $otpCode,
-            'expires_at' => now()->addMinutes(5),
+ public function register(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|email|max:255|unique:users',
+            'password' => 'required|string|min:8|confirmed',
+            'phone' => 'nullable|string|max:20|unique:users',
+            'role' => 'required|in:passenger,driver',
+            'gender' => 'nullable|in:male,female',
         ]);
 
-        // 4️⃣ Send OTP via Vonage
-        try {
-            $this->sendSms($user->phone, $otpCode);
-        } catch (\Exception $e) {
-            \Log::error("OTP SMS failed: " . $e->getMessage());
+        $user = User::create([
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'password' => Hash::make($validated['password']),
+            'phone' => $validated['phone'] ?? null,
+            'role' => $validated['role'],
+            'gender' => $validated['gender'] ?? 'female',
+        ]);
+
+        event(new \Illuminate\Auth\Events\Registered($user));
+
+        if ($user->phone) {
+            $otpCode = rand(100000, 999999);
+            \App\Models\Otp::create([
+                'phone' => $user->phone,
+                'code' => $otpCode,
+                'expires_at' => now()->addMinutes(5),
+            ]);
+
+            try {
+                $this->sendSms($user->phone, $otpCode);
+            } catch (Exception $e) {
+                Log::error("OTP SMS failed: " . $e->getMessage());
+                return response()->json([
+                    'message' => 'Registration successful, but OTP could not be sent. Please try again or contact support.',
+                    'error' => $e->getMessage(),
+                    'token' => $user->createToken('auth_token')->plainTextToken,
+                    'user' => $user,
+                ], 500);
+            }
         }
+
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        return response()->json([
+            'message' => 'Registration successful. Please verify your email and enter the OTP sent to your phone.',
+            'token' => $token,
+            'user' => $user,
+        ], 201);
     }
-
-    // 5️⃣ Generate API token
-    $token = $user->createToken('auth_token')->plainTextToken;
-
-    // ✅ Return response after OTP is sent
-    return response()->json([
-        'message' => 'Registration successful. Please verify your email and enter the OTP sent to your phone.',
-        'token' => $token,
-        'user' => $user,
-    ], 201);
-}
 
 
     /**
