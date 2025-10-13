@@ -1,13 +1,16 @@
 <?php
-
+// app/Http/Resources/RideResource.php
 namespace App\Http\Resources;
 
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Services\GeocodingService;
 
 class RideResource extends JsonResource
 {
     public function toArray($request)
     {
+        $geocodingService = app(GeocodingService::class);
+
         return [
             'id' => $this->id,
             'status' => $this->status,
@@ -15,10 +18,12 @@ class RideResource extends JsonResource
             'origin' => [
                 'lat' => (string)$this->origin_lat,
                 'lng' => (string)$this->origin_lng,
+                'address' => $geocodingService->getAddress($this->origin_lat, $this->origin_lng),
             ],
             'destination' => [
                 'lat' => (string)$this->destination_lat,
                 'lng' => (string)$this->destination_lng,
+                'address' => $geocodingService->getAddress($this->destination_lat, $this->destination_lng),
             ],
             'driver' => $this->whenLoaded('driver', function() {
                 return [
@@ -35,7 +40,7 @@ class RideResource extends JsonResource
                         'role' => $this->driver->user->role,
                         'gender' => $this->driver->user->gender,
                         'profile_photo' => $this->driver->user->profile_photo,
-                    ] : null
+                    ] : null,
                 ];
             }),
             'passenger' => $this->whenLoaded('passenger', function() {
@@ -45,7 +50,6 @@ class RideResource extends JsonResource
                     'email' => $this->passenger->email,
                     'role' => $this->passenger->role,
                     'gender' => $this->passenger->gender,
-                    // 'profile_photo' => $this->passenger->profile_photo,
                 ];
             }),
             'timestamps' => [

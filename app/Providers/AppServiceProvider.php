@@ -6,15 +6,17 @@ use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\URL;
 use App\Models\Ride;
 use App\Observers\RideObserver;
-
+use App\Services\GeocodingService;
 class AppServiceProvider extends ServiceProvider
 {
     /**
      * Register any application services.
      */
-    public function register(): void
+        public function register()
     {
-        //
+        $this->app->singleton(GeocodingService::class, function ($app) {
+            return new GeocodingService();
+        });
     }
 
     /**
