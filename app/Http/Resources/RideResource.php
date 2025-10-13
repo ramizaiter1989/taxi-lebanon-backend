@@ -3,7 +3,6 @@
 namespace App\Http\Resources;
 
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Facades\Http;
 
 class RideResource extends JsonResource
 {
@@ -16,12 +15,10 @@ class RideResource extends JsonResource
             'origin' => [
                 'lat' => (string)$this->origin_lat,
                 'lng' => (string)$this->origin_lng,
-                'address' => $this->getAddress($this->origin_lat, $this->origin_lng),
             ],
             'destination' => [
                 'lat' => (string)$this->destination_lat,
                 'lng' => (string)$this->destination_lng,
-                'address' => $this->getAddress($this->destination_lat, $this->destination_lng),
             ],
             'driver' => $this->whenLoaded('driver', function() {
                 return [
@@ -31,7 +28,6 @@ class RideResource extends JsonResource
                     'availability_status' => $this->driver->availability_status,
                     'current_driver_lat' => (string)$this->driver->current_driver_lat,
                     'current_driver_lng' => (string)$this->driver->current_driver_lng,
-                    'current_driver_address' => $this->getAddress($this->driver->current_driver_lat, $this->driver->current_driver_lng),
                     'user' => $this->driver->user ? [
                         'id' => $this->driver->user->id,
                         'name' => $this->driver->user->name,
@@ -49,6 +45,7 @@ class RideResource extends JsonResource
                     'email' => $this->passenger->email,
                     'role' => $this->passenger->role,
                     'gender' => $this->passenger->gender,
+                    // 'profile_photo' => $this->passenger->profile_photo,
                 ];
             }),
             'timestamps' => [
@@ -57,23 +54,5 @@ class RideResource extends JsonResource
                 'completed_at' => $this->completed_at,
             ],
         ];
-    }
-
-    protected function getAddress($lat, $lng)
-    {
-        // Example using OpenStreetMap Nominatim
-        $response = Http::get("https://nominatim.openstreetmap.org/reverse", [
-            'lat' => $lat,
-            'lon' => $lng,
-            'format' => 'json',
-            'zoom' => 18,
-        ]);
-
-        if ($response->successful()) {
-            $data = $response->json();
-            return $data['display_name'] ?? 'Address not found';
-        }
-
-        return 'Address not found';
     }
 }
