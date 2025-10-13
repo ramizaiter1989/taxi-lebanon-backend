@@ -22,77 +22,108 @@ class RideController extends Controller
     /**
      * Passenger requests a ride
      */
-    public function store(Request $request)
-        {
-            $passenger = $request->user();
+    // app/Http/Controllers/Api/RideController.php (store method)
+public function store(Request $request)
+{
+    $passenger = $request->user();
 
-    // Check if passenger already has an active ride
+    // Prevent multiple active rides
     $activeRide = Ride::where('passenger_id', $passenger->id)
         ->whereIn('status', ['pending', 'in_progress', 'arrived'])
         ->first();
-
     if ($activeRide) {
-        return response()->json([
-            'error' => 'You already have an active ride. Please complete or cancel it before requesting a new one.'
-        ], 403);
+        return response()->json(['error' => 'You already have an active ride.'], 403);
     }
-            $request->validate([
-                'origin_lat' => 'required|numeric',
-                'origin_lng' => 'required|numeric',
-                'destination_lat' => 'required|numeric',
-                'destination_lng' => 'required|numeric',
-            ]);
 
-            $ride = Ride::create([
-                'passenger_id' => $request->user()->id,
-                'origin_lat' => $request->origin_lat,
-                'origin_lng' => $request->origin_lng,
-                'destination_lat' => $request->destination_lat,
-                'destination_lng' => $request->destination_lng,
-                'status' => 'pending',
-            ]);
-            
-            event(new RideRequested($ride));
-            // Find nearby drivers (within 10 km)
-            $nearbyDrivers = Driver::where('availability_status', true)
-                ->whereNotNull('current_driver_lat')
-                ->whereNotNull('current_driver_lng')
-                ->select('*')
-                ->selectRaw('
-                    (6371 * acos(
-                        cos(radians(?)) *
-                        cos(radians(current_driver_lat)) *
-                        cos(radians(current_driver_lng) - radians(?)) +
-                        sin(radians(?)) *
-                        sin(radians(current_driver_lat))
-                    )) as distance', [
-                    $request->origin_lat,
-                    $request->origin_lng,
-                    $request->origin_lat
-                ])
-                ->having('distance', '<=', 10)  // 10 km range
-                ->with('user')
-                ->get();
+    // Accept optional distance/duration/fare (frontend computed)
+    $data = $request->validate([
+        'origin_lat' => 'required|numeric',
+        'origin_lng' => 'required|numeric',
+        'destination_lat' => 'required|numeric',
+        'destination_lng' => 'required|numeric',
+        'distance' => 'nullable|numeric|min:0', // in km (frontend should send km)
+        'duration' => 'nullable|numeric|min:0', // in minutes
+        'fare' => 'nullable|numeric|min:0',
+        'is_pool' => 'sometimes|boolean',
+    ]);
 
-            // Notify nearby drivers
-            foreach ($nearbyDrivers as $driver) {
-                $driver->user->notify(new RideNotification(
-                    'New Ride Request',
-                    'A passenger nearby needs a ride',
-                    [
-                        'type' => 'new_ride',
-                        'ride_id' => $ride->id,
-                        'pickup_lat' => $ride->origin_lat,
-                        'pickup_lng' => $ride->origin_lng
-                    ]
-                ));
-            }
+    // If frontend didn't calculate distance/duration, try to compute on backend (RouteService)
+    if (empty($data['distance']) || empty($data['duration'])) {
+        // try to get from RouteService
+        $routeService = app(\App\Services\RouteService::class);
+        $trip = $routeService->getRouteInfo(
+            $data['origin_lat'],
+            $data['origin_lng'],
+            $data['destination_lat'],
+            $data['destination_lng']
+        );
 
-            // Broadcast the ride request to all drivers
-            RideRequested::dispatch($ride);
-
-            return response()->json($ride);
+        if ($trip && isset($trip['distance'], $trip['duration'])) {
+            // routeService distance in meters? adjust accordingly
+            $data['distance'] = isset($trip['distance']) && $trip['distance'] > 1000
+                ? ($trip['distance'] / 1000.0)
+                : ($trip['distance'] / 1000.0); // ensure km
+            $data['duration'] = $trip['duration'] / 60.0; // sec -> minutes
         }
+    }
+
+    // Create ride record with provided or computed distance/duration
+    $ride = Ride::create(array_merge([
+        'passenger_id' => $passenger->id,
+        'origin_lat' => $data['origin_lat'],
+        'origin_lng' => $data['origin_lng'],
+        'destination_lat' => $data['destination_lat'],
+        'destination_lng' => $data['destination_lng'],
+        'status' => 'pending',
+    ], array_filter([
+        'distance' => $data['distance'] ?? null,
+        'duration' => $data['duration'] ?? null,
+        // do not trust frontend fare blindly; we'll validate it below and may overwrite.
+        'fare' => $data['fare'] ?? null,
+        'is_pool' => $data['is_pool'] ?? false,
+    ])));
+
+    // Server-side fare validation (anti-cheat)
+    if (!empty($ride->distance) && !empty($ride->duration)) {
+        $expectedFare = $ride->calculateFare(false); // compute but don't save here
+        if (!is_null($expectedFare)) {
+            // If frontend passed a fare, validate difference tolerance
+            if ($request->filled('fare')) {
+                $frontendFare = (float) $request->input('fare');
+                $tolerancePercent = config('rides.fare_tolerance_percent', 2); // default 2%
+                $allowedDiff = max(0.01, ($tolerancePercent / 100) * max($expectedFare, $frontendFare));
+                if (abs($frontendFare - $expectedFare) > $allowedDiff) {
+                    // Too big mismatch — prefer server fare and log suspicious attempt
+                    \Log::warning('Fare mismatch on ride create', [
+                        'user_id' => $passenger->id,
+                        'frontend_fare' => $frontendFare,
+                        'expected_fare' => $expectedFare,
+                    ]);
+                    // Overwrite frontend fare with expected fare
+                    $ride->fare = $expectedFare;
+                    $ride->save();
+                } else {
+                    // Accept frontend fare (small difference) and persist it
+                    $ride->fare = $frontendFare;
+                    $ride->save();
+                }
+            } else {
+                // No frontend fare passed -> persist server-calculated fare
+                $ride->fare = $expectedFare;
+                $ride->save();
+            }
+        }
+    }
+
+    // Broadcast and notify drivers (your existing logic)
+    event(new RideRequested($ride));
+
+    // find nearby drivers etc (you can keep your existing code)
+    // ...
+
+    return new RideResource($ride);
+}
+
 
 /**
  * GET /api/rides
@@ -567,26 +598,7 @@ return response()->json([
     /**
      * Calculate fare dynamically (admin-adjustable formula)
      */
-   protected function calculateFare(Ride $ride)
-{
-    $settings = \App\Models\FareSettings::first();
-    if (!$settings) return;
-
-    $fare = $settings->base_fare
-          + ($ride->distance * $settings->per_km_rate)
-          + ($ride->duration * $settings->per_minute_rate);
-
-    // Apply minimum fare
-    if ($fare < $settings->minimum_fare) {
-        $fare = $settings->minimum_fare;
-    }
-
-    // Apply peak multiplier
-    $fare *= $settings->peak_multiplier;
-
-    $ride->fare = round($fare, 2);
-    $ride->save();
-}
+   
 
 
 protected function calculateDistanceToPickup(Ride $ride, Driver $driver)

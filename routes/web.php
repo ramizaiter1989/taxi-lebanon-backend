@@ -25,7 +25,7 @@ Route::get('/', function () {
     return view('welcome');
 });
 Route::get('/fare-estimator', function () {
-    return view('fare-estimator');
+    return view('admin.rides.fare-settings ');
 });
 Route::get('/test-mail', function() {
     Mail::raw('This is a test email', function($message) {
