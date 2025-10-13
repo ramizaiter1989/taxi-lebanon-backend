@@ -32,11 +32,13 @@ Route::middleware('auth:sanctum')->post('logout', [AuthController::class, 'logou
 
 Broadcast::routes(['middleware' => ['auth:sanctum']]);
 
+//without otp
+Route::post('verify-otp', [OtpController::class, 'verifyOtp']);
 // OTP Verification: Send, Resend, Verify OTP codes
 Route::prefix('otp')->group(function () {
     Route::post('send', [OtpController::class, 'sendOtp']); // Send OTP to phone number
     Route::post('resend', [OtpController::class, 'resendOtp']); // Resend OTP if expired/not received
-    Route::post('verify', [OtpController::class, 'verifyOtp']); // Verify OTP code
+     // Verify OTP code
 });
 
 // Email Verification: Verify email via signed URL
