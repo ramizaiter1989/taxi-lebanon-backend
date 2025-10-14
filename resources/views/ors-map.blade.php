@@ -6,9 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ORS Map / Route Demo</title>
 
-  <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-sA+e2Yp1qP1+gC1p8i3j2dZfj1s4j0kq3gE0g2e8mqs=" crossorigin=""/>
+
 
   <style>
     body, html { height: 100%; margin: 0; padding: 0; }
@@ -38,8 +36,7 @@
   <div id="map"></div>
 
   <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-o9N1j7kK0QbYq0p7u6i1vZ4Y3pQ6XU8F3z0u8a4qkz8=" crossorigin=""></script>
+
 
   <script>
     // Grab ORS key
