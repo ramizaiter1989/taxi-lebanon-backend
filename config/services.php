@@ -45,5 +45,9 @@ return [
     'from' => env('VONAGE_FROM'),
 ],
 
+    'ors' => [
+        'key' => env('ORS_KEY'),
+    ],
+
 
 ];

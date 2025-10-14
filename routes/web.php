@@ -24,6 +24,9 @@ Broadcast::routes(['middleware' => ['auth:sanctum']]);
 Route::get('/', function () {
     return view('welcome');
 });
+Route::get('/maps', function () {
+    return view('ors-map');
+})->name('ors.map');
 Route::get('/fare-estimator', function () {
     return view('admin.rides.fare-settings ');
 });
