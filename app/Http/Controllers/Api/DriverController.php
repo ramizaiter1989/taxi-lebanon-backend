@@ -546,14 +546,12 @@ class DriverController extends Controller
         $logs = DriverActiveDuration::where('driver_id', $driver->id)
             ->orderByDesc('active_at')
             ->get()
-            ->map(function ($log) {
-                return [
-                    'active_at' => $log->active_at->toDateTimeString(),
-                    'inactive_at' => $log->inactive_at?->toDateTimeString(),
-                    'duration_seconds' => $log->duration_seconds,
-                    'duration_human' => gmdate("H:i:s", $log->duration_seconds ?? 0),
-                ];
-            });
+            ->map(fn($log) => [
+                'active_at' => Carbon::parse($log->active_at)->toDateTimeString(),
+                'inactive_at' => $log->inactive_at ? Carbon::parse($log->inactive_at)->toDateTimeString() : null,
+                'duration_seconds' => $log->duration_seconds,
+                'duration_human' => gmdate("H:i:s", $log->duration_seconds ?? 0),
+            ]);
 
         return response()->json($logs);
     }
