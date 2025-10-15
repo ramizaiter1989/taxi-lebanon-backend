@@ -12,11 +12,11 @@ use App\Http\Controllers\Auth\OtpController;
 // ========================================
 // PUBLIC API ROUTES (No Authentication)
 // ========================================
-Route::prefix('auth')->group(function () {
+
     Route::post('register', [AuthController::class, 'register']);
     Route::post('login', [AuthController::class, 'login']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
-});
+
 
 // OTP Verification (Public)
 Route::prefix('otp')->group(function () {
