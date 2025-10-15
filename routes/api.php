@@ -70,7 +70,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('range', [DriverController::class, 'updateRange']);
         Route::get('activity-logs', [DriverController::class, 'activityLogs']);
         Route::get('my-location', [DriverController::class, 'getMyLocation']);
-        Route::get('/', [DriverController::class, 'index']);
+        Route::get('/', [DriverController::class, 'index']);// should be just for admin
         Route::post('block/{passenger}', [DriverController::class, 'blockPassenger']);
         Route::delete('unblock/{passenger}', [DriverController::class, 'unblockPassenger']);
         Route::get('blocked-passengers', [DriverController::class, 'getBlockedPassengers']);
@@ -105,7 +105,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/', [RideController::class, 'store']);
         Route::get('/', [RideController::class, 'index']);
         Route::get('history', [RideController::class, 'history']);
-        Route::get('current', [RideController::class, 'current']);
+        Route::get('live', [RideController::class, 'current']);
         Route::get('available', [RideController::class, 'availableRides']);
         Route::post('{ride}/accept', [RideController::class, 'acceptRide']);
         Route::post('{ride}/update-location', [RideController::class, 'updateLocation']);
