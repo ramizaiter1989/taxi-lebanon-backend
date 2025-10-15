@@ -44,8 +44,13 @@ class Driver extends Model
         'availability_status' => true,
         'rating' => 5.0,
     ];
-
-
+    //check driver profile
+    public function isProfileCompleted(): bool
+    {
+        return !empty($this->license_number) 
+            && !empty($this->vehicle_type) 
+            && !empty($this->vehicle_number);
+    }
     // Relationships
     public function user()
     {

@@ -7,8 +7,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use App\Models\User;
+use App\Models\Driver;
 use App\Traits\SendsOtpSms;
 use Exception;
+use App\Http\Resources\UserResource;
 
 class AuthController extends Controller
 {
@@ -97,11 +99,19 @@ public function register(Request $request)
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        return response()->json([
-            'token' => $token,
-            'user' => $user,
-        ]);
+    $response = [
+        'token' => $token,
+        'user' => $user,
+    ];
+
+    // Add profile completion status for drivers
+    if ($user->role === 'driver') {
+        $driver = $user->driver;
+        $response['profile_completed'] = $driver && $driver->isProfileCompleted();
     }
+
+    return response()->json($response);
+}
 
 
 
@@ -128,60 +138,63 @@ public function register(Request $request)
     /**
      * Get authenticated user profile
      */
-    public function profile(Request $request)
-    {
-        $user = $request->user();
 
-        // Load driver relationship if user is a driver
-        if ($user->role === 'driver') {
-            $user->load('driver');
-        }
 
-        return response()->json($user);
+public function profile(Request $request)
+{
+    $user = $request->user();
+
+    if ($user->role === 'driver') {
+        $user->load('driver');
     }
+
+    return new UserResource($user);
+}
 
     /**
      * Complete driver profile (after registration)
      */
-    public function completeDriverProfile(Request $request)
-    {
-        $user = $request->user();
+public function completeDriverProfile(Request $request)
+{
+    $user = $request->user();
 
-        if ($user->role !== 'driver') {
-            return response()->json(['message' => 'Only drivers can complete driver profile'], 403);
-        }
-
-        $validated = $request->validate([
-            'license_number' => 'required|string|max:50',
-            'vehicle_type' => 'required|string|max:50',
-            'vehicle_number' => 'required|string|max:50',
-            'car_photo' => 'nullable|image|max:2048',
-            'license_photo' => 'nullable|image|max:2048',
-            'id_photo' => 'nullable|image|max:2048',
-            'insurance_photo' => 'nullable|image|max:2048',
-        ]);
-
-        $driver = $user->driver;
-
-        if (!$driver) {
-            return response()->json(['message' => 'Driver profile not found'], 404);
-        }
-
-        // Handle file uploads
-        foreach (['car_photo', 'license_photo', 'id_photo', 'insurance_photo'] as $photoField) {
-            if ($request->hasFile($photoField)) {
-                $path = $request->file($photoField)->store('drivers', 'public');
-                $validated[$photoField] = $path;
-            }
-        }
-
-        $driver->update($validated);
-
-        return response()->json([
-            'message' => 'Driver profile completed successfully',
-            'driver' => $driver,
-        ]);
+    if ($user->role !== 'driver') {
+        return response()->json(['message' => 'Only drivers can complete driver profile'], 403);
     }
+
+    $validated = $request->validate([
+        'license_number' => 'required|string|max:50',
+        'vehicle_type' => 'required|string|max:50',
+        'vehicle_number' => 'required|string|max:50',
+        'car_photo' => 'nullable|image|max:2048',
+        'license_photo' => 'nullable|image|max:2048',
+        'id_photo' => 'nullable|image|max:2048',
+        'insurance_photo' => 'nullable|image|max:2048',
+    ]);
+
+    $driver = $user->driver;
+
+    if (!$driver) {
+        // Fallback in case auto-creation failed
+        $driver = Driver::create(['user_id' => $user->id]);
+    }
+
+    // Handle file uploads
+    foreach (['car_photo', 'license_photo', 'id_photo', 'insurance_photo'] as $photoField) {
+        if ($request->hasFile($photoField)) {
+            $path = $request->file($photoField)->store('drivers', 'public');
+            $validated[$photoField] = $path;
+        }
+    }
+
+    $driver->update($validated);
+
+    return response()->json([
+        'message' => 'Driver profile completed successfully',
+        'profile_completed' => true,
+        'driver' => $driver,
+    ]);
+}
 
     /**
      * Get user notifications

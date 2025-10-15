@@ -74,7 +74,7 @@ class User extends Authenticatable implements MustVerifyEmail
 
     static::created(function ($user) {
         if ($user->role === 'driver') {
-            \App\Models\Driver::create([
+            Driver::create([
                 'user_id' => $user->id,
             ]);
         }
@@ -98,6 +98,6 @@ public function routeNotificationForFcm()
 
     public function driver()
 {
-    return $this->hasOne(\App\Models\Driver::class);
+    return $this->hasOne(Driver::class);
 }
 }

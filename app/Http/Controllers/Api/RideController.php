@@ -141,7 +141,6 @@ public function index(Request $request)
     $perPage = (int) $request->query('per_page', 15);
     $statusFilter = $request->query('status');
 
-    // Live statuses
     $liveStatuses = ['pending', 'accepted', 'in_progress', 'arrived'];
 
     if ($user->role === 'passenger') {
@@ -157,7 +156,6 @@ public function index(Request $request)
             ->whereIn('status', $liveStatuses)
             ->with(['driver.user', 'passenger']);
     } else {
-        // admin or others: return all live rides (optional: restrict by permission)
         $query = Ride::whereIn('status', $liveStatuses)->with(['driver.user', 'passenger']);
     }
 
@@ -169,6 +167,7 @@ public function index(Request $request)
 
     return response()->json($rides);
 }
+
 
 /**
  * GET /api/rides/history

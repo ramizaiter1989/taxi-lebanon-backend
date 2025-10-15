@@ -18,30 +18,48 @@ class PassengerController extends Controller
     /**
      * Update passenger location
      */
-    public function updateLocation(Request $request)
-    {
-        $request->validate([
-            'lat' => 'required|numeric|between:-90,90',
-            'lng' => 'required|numeric|between:-180,180',
-        ]);
+public function updateLocation(Request $request)
+{
+    $request->validate([
+        'lat' => 'required|numeric|between:-90,90',
+        'lng' => 'required|numeric|between:-180,180',
+    ]);
 
-        $user = $request->user();
-        if ($user->role !== 'passenger') {
-            return response()->json(['error' => 'Only passengers can update location'], 403);
-        }
+    $user = $request->user();
 
-        $user->update([
-            'current_lat' => $request->lat,
-            'current_lng' => $request->lng,
-            'last_location_update' => now(),
-        ]);
-
-        if($user->status){
-            broadcast(new PassengerLocationUpdated($user))->toOthers();
-        }
-
-        return response()->json(['message' => 'Location updated']);
+    if ($user->role !== 'passenger') {
+        return response()->json(['error' => 'Only passengers can update location'], 403);
     }
+
+    $user->update([
+        'current_lat' => $request->lat,
+        'current_lng' => $request->lng,
+        'last_location_update' => now(),
+    ]);
+
+    if ($user->status) {
+        broadcast(new PassengerLocationUpdated($user))->toOthers();
+    }
+
+    // Return active ride info if exists
+    $activeRide = Ride::where('passenger_id', $user->id)
+        ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
+        ->with('driver.user')
+        ->first();
+
+    return response()->json([
+        'message' => 'Location updated',
+        'has_active_ride' => $activeRide ? true : false,
+        'ride_status' => $activeRide?->status,
+        'driver' => $activeRide ? [
+            'name' => $activeRide->driver->user->name,
+            'phone' => $activeRide->driver->user->phone,
+            'lat' => $activeRide->driver->current_driver_lat,
+            'lng' => $activeRide->driver->current_driver_lng,
+        ] : null,
+    ]);
+}
+
 
     /**
  * Stream passenger location in real-time (called every few seconds from frontend)
@@ -118,33 +136,75 @@ public function streamLocation(Request $request)
     /**
      * Update passenger profile
      */
-    public function updateProfile(Request $request)
-    {
-        $user = $request->user();
-        
-        if ($user->role !== 'passenger') {
-            return response()->json(['error' => 'Only passengers can update passenger profile'], 403);
-        }
-        
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20|unique:users,phone,' . $user->id,
-            'gender' => 'nullable|in:male,female',
-            'profile_photo' => 'nullable|image|mimes:jpg,jpeg,png|max:2048',
-        ]);
-        
-        if ($request->hasFile('profile_photo')) {
-            $path = $request->file('profile_photo')->store('profiles', 'public');
-            $validated['profile_photo'] = $path;
-        }
-        
-        $user->update($validated);
-        
-        return response()->json([
-            'message' => 'Profile updated successfully',
-            'user' => $user
-        ]);
+
+
+public function updateProfile(Request $request, ?User $passenger = null)
+{
+    $authUser = Auth::user();
+
+    // Determine which user to update
+    $user = $authUser->role === 'admin' && $passenger
+        ? $passenger
+        : $authUser;
+
+    // Authorization
+    if ($authUser->role !== 'admin' && $authUser->id !== $user->id) {
+        return response()->json(['message' => 'Unauthorized'], 403);
     }
+
+    // Validation rules
+    $rules = [
+        'name' => 'nullable|string|max:255',
+        'phone' => 'nullable|string|max:20|unique:users,phone,' . $user->id,
+        'email' => 'nullable|email|unique:users,email,' . $user->id,
+        'gender' => 'nullable|in:male,female',
+        'role' => 'nullable|string|in:passenger,driver,admin',
+        'status' => 'nullable|boolean',
+        'is_verified' => 'nullable|boolean',
+        'is_locked' => 'nullable|boolean',
+        'wallet_balance' => 'nullable|numeric|min:0',
+        'profile_photo' => 'nullable|image|mimes:jpg,jpeg,png|max:2048',
+    ];
+
+    $validated = $request->validate($rules);
+
+    // Limit passenger edits
+    if ($authUser->role !== 'admin') {
+        $validated = array_intersect_key($validated, array_flip([
+            'name', 'profile_photo'
+        ]));
+    }
+
+    // Handle profile photo upload
+    if ($request->hasFile('profile_photo')) {
+        $path = $request->file('profile_photo')->store('profiles', 'public');
+        $validated['profile_photo'] = $path;
+    }
+
+    $user->update($validated);
+
+    return response()->json([
+        'message' => 'Profile updated successfully',
+        'user' => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'gender' => $user->gender,
+            'role' => $user->role,
+            'status' => $user->status,
+            'is_verified' => $user->is_verified,
+            'is_locked' => $user->is_locked,
+            'wallet_balance' => $user->wallet_balance,
+            'profile_photo_url' => $user->profile_photo
+                ? asset('storage/' . $user->profile_photo)
+                : null,
+        ],
+    ]);
+}
+
+
+
 
     /**
      * Admin fetches all online passengers

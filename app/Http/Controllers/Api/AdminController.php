@@ -18,142 +18,62 @@ class AdminController extends Controller
      * - Driver: See all online drivers only (no active ride)
      * - Passenger: See only themselves, and their assigned driver when ride is accepted
      */
-    public function liveLocations(Request $request)
-    {
-        try {
-            $user = $request->user();
-            
-            if (!$user) {
-                return response()->json(['error' => 'Unauthenticated'], 401);
-            }
-
-            $now = Carbon::now();
-            $fiveMinutesAgo = $now->copy()->subMinutes(5);
-
-            $liveLocations = collect();
-
-            // ---------------------
-            // ADMIN: See everything
-            // ---------------------
-            if ($user->role === 'admin') {
-                // Online Drivers (all)
-                $drivers = Driver::where('availability_status', true)
-                    ->whereNotNull('current_driver_lat')
-                    ->whereNotNull('current_driver_lng')
-                    ->with('user')
-                    ->get()
-                    ->map(function($driver) {
-                        return [
-                            'type' => 'driver',
-                            'id' => $driver->id,
-                            'user_id' => $driver->user_id,
-                            'name' => $driver->user->name ?? 'Unknown Driver',
-                            'lat' => (float) $driver->current_driver_lat,
-                            'lng' => (float) $driver->current_driver_lng,
-                            'last_update' => $driver->updated_at,
-                            'status' => $driver->availability_status ? 'online' : 'offline',
-                        ];
-                    });
-
-                // Online Passengers (active in last 5 minutes)
-                $passengers = User::where('role', 'passenger')
-                    ->where('status', true)
-                    ->whereNotNull('current_lat')
-                    ->whereNotNull('current_lng')
-                    ->where('last_location_update', '>=', $fiveMinutesAgo)
-                    ->get()
-                    ->map(function($passenger) {
-                        return [
-                            'type' => 'passenger',
-                            'id' => $passenger->id,
-                            'name' => $passenger->name,
-                            'lat' => (float) $passenger->current_lat,
-                            'lng' => (float) $passenger->current_lng,
-                            'last_update' => $passenger->last_location_update,
-                            'status' => 'online',
-                        ];
-                    });
-
-                $liveLocations = $drivers->merge($passengers);
-            }
-
-            // ---------------------
-            // DRIVER: See all drivers (except self) with no active ride
-            // ---------------------
-            elseif ($user->role === 'driver' && $user->driver) {
-                $drivers = Driver::where('availability_status', true)
-                    ->whereNotNull('current_driver_lat')
-                    ->whereNotNull('current_driver_lng')
-                    ->where('id', '!=', $user->driver->id) // Exclude self by driver ID
-                    ->with('user')
-                    ->get()
-                    ->filter(function($driver) {
-                        // Only show drivers without active rides
-                        $hasActiveRide = $driver->rides()
-                            ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
-                            ->exists();
-                        return !$hasActiveRide;
-                    })
-                    ->map(function($driver) {
-                        return [
-                            'type' => 'driver',
-                            'id' => $driver->id,
-                            'user_id' => $driver->user_id,
-                            'name' => $driver->user->name ?? 'Unknown Driver',
-                            'lat' => (float) $driver->current_driver_lat,
-                            'lng' => (float) $driver->current_driver_lng,
-                            'last_update' => $driver->updated_at,
-                            'status' => 'online',
-                        ];
-                    })
-                    ->values(); // Reset array keys
-
-                $liveLocations = $drivers;
-            }
-
-            // ---------------------
-            // PASSENGER: See only assigned driver (if ride accepted)
-            // ---------------------
-            elseif ($user->role === 'passenger') {
-                // Find active/accepted ride for this passenger
-                $activeRide = Ride::where('passenger_id', $user->id)
-                    ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
-                    ->with('driver.user')
-                    ->first();
-
-                if ($activeRide && $activeRide->driver) {
-                    $driver = $activeRide->driver;
-                    
-                    if ($driver->current_driver_lat && $driver->current_driver_lng) {
-                        $liveLocations->push([
-                            'type' => 'driver',
-                            'id' => $driver->id,
-                            'user_id' => $driver->user_id,
-                            'name' => $driver->user->name ?? 'Your Driver',
-                            'lat' => (float) $driver->current_driver_lat,
-                            'lng' => (float) $driver->current_driver_lng,
-                            'last_update' => $driver->updated_at,
-                            'ride_id' => $activeRide->id,
-                            'ride_status' => $activeRide->status,
-                            'is_my_driver' => true,
-                        ]);
-                    }
-                }
-                // Passenger only sees their assigned driver, no other users
-            }
-
-            return response()->json($liveLocations);
-
-        } catch (\Exception $e) {
-            Log::error('Error fetching live locations: ' . $e->getMessage());
-            Log::error($e->getTraceAsString());
-            
-            return response()->json([
-                'error' => 'Failed to fetch live locations',
-                'message' => config('app.debug') ? $e->getMessage() : 'Internal server error'
-            ], 500);
-        }
+public function liveLocations(Request $request)
+{
+    $user = $request->user();
+    if ($user->role !== 'admin') {
+        return response()->json(['error' => 'Unauthorized'], 403);
     }
+
+    $now = Carbon::now();
+    $fiveMinutesAgo = $now->copy()->subMinutes(5);
+
+    // Online Drivers
+    $drivers = Driver::where('availability_status', true)
+        ->whereNotNull('current_driver_lat')
+        ->whereNotNull('current_driver_lng')
+        ->with('user')
+        ->get()
+        ->map(function($driver) {
+            return [
+                'type' => 'driver',
+                'id' => $driver->id,
+                'user_id' => $driver->user_id,
+                'name' => $driver->user->name ?? 'Unknown Driver',
+                'lat' => (float) $driver->current_driver_lat,
+                'lng' => (float) $driver->current_driver_lng,
+                'last_update' => $driver->updated_at,
+                'status' => 'online',
+            ];
+        });
+
+    // Online Passengers
+    $passengers = User::where('role', 'passenger')
+        ->where('status', true)
+        ->whereNotNull('current_lat')
+        ->whereNotNull('current_lng')
+        ->where('last_location_update', '>=', $fiveMinutesAgo)
+        ->get()
+        ->map(function($passenger) {
+            return [
+                'type' => 'passenger',
+                'id' => $passenger->id,
+                'name' => $passenger->name,
+                'lat' => (float) $passenger->current_lat,
+                'lng' => (float) $passenger->current_lng,
+                'last_update' => $passenger->last_location_update,
+                'status' => 'online',
+            ];
+        });
+
+    return response()->json([
+        'drivers' => $drivers,
+        'passengers' => $passengers,
+        'total_drivers' => $drivers->count(),
+        'total_passengers' => $passengers->count(),
+    ]);
+}
+
 
     /**
      * Admin only: Get all users with their current status
