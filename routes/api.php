@@ -1,4 +1,5 @@
 <?php
+use GuzzleHttp\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
@@ -8,6 +9,8 @@ use App\Http\Controllers\Api\PassengerController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Auth\OtpController;
+
+use App\Http\Controllers\Api\BenzConsumptionController;
 
 // ========================================
 // PUBLIC API ROUTES (No Authentication)
@@ -48,12 +51,16 @@ Route::middleware('auth:sanctum')->group(function () {
     // User Profile
     Route::get('/user/profile', [AuthController::class, 'profile']);
     Route::put('/user/password', [\App\Http\Controllers\Auth\PasswordController::class, 'update']);
+    Route::post('/benz-consumptions', [BenzConsumptionController::class, 'store'])->middleware('admin');
 
+    // Drivers and admins can see the list
+    Route::get('/benz-consumptions', [BenzConsumptionController::class, 'index']);
     // Admin Routes (Require 'admin' role)
     Route::middleware('admin')->prefix('admin')->group(function () {
         Route::get('live-locations', [AdminController::class, 'liveLocations']);
         Route::get('statistics', [AdminController::class, 'statistics']);
         Route::get('users', [AdminController::class, 'allUsers']);
+
         Route::prefix('fare-settings')->group(function () {
             Route::get('/', [\App\Http\Controllers\Admin\FareSettingsController::class, 'index']);
             Route::put('/', [\App\Http\Controllers\Admin\FareSettingsController::class, 'update']);

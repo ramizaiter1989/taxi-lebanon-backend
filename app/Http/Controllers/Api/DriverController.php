@@ -327,31 +327,50 @@ private function getViewForDriver($user, $defaultLocations)
     }
 
     public function showProfile(Request $request, ?Driver $driver = null)
-    {
-        $user = Auth::user();
+{
+    $user = Auth::user();
 
-        if ($user->role === 'admin') {
-            if (!$driver) {
-                return response()->json(['message' => 'Driver ID is required for admin'], 400);
-            }
-        } else {
-            $driver = $driver ?? $user->driver;
-            if (!$driver) {
-                return response()->json(['message' => 'Driver profile not found'], 404);
-            }
+    if ($user->role === 'admin') {
+        if (!$driver) {
+            return response()->json(['message' => 'Driver ID is required for admin'], 400);
         }
-
-        if ($user->role !== 'admin' && $driver->user_id !== $user->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+    } else {
+        $driver = $driver ?? $user->driver;
+        if (!$driver) {
+            return response()->json(['message' => 'Driver profile not found'], 404);
         }
-
-        $driverData = $driver->toArray();
-        foreach (['car_photo', 'license_photo', 'id_photo', 'insurance_photo'] as $photoField) {
-            $driverData[$photoField] = $driver->$photoField ? asset('storage/' . $driver->$photoField) : null;
-        }
-
-        return response()->json($driverData);
     }
+
+    // Prevent non-admins from accessing other drivers
+    if ($user->role !== 'admin' && $driver->user_id !== $user->id) {
+        return response()->json(['message' => 'Unauthorized'], 403);
+    }
+
+    // Load the related user info (name, email, etc.)
+    $driver->load('user');
+
+    // Convert to array
+    $driverData = $driver->toArray();
+
+    // Add full URLs for photo fields
+    foreach ([
+        'car_photo',
+        'car_photo_front',
+        'car_photo_back',
+        'car_photo_left',
+        'car_photo_right',
+        'license_photo',
+        'id_photo',
+        'insurance_photo'
+    ] as $photoField) {
+        $driverData[$photoField] = $driver->$photoField
+            ? asset('storage/' . $driver->$photoField)
+            : null;
+    }
+
+    return response()->json($driverData);
+}
+
 
 
 
