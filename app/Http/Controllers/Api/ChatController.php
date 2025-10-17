@@ -11,39 +11,40 @@ use Illuminate\Support\Facades\Log;
 class ChatController extends Controller
 {
     public function store(Request $request)
-{
-    $request->validate([
-        'ride_id' => 'required|exists:rides,id',
-        'message' => 'required|string',
-    ]);
+        {
+            $request->validate([
+                'ride_id' => 'required|exists:rides,id',
+                'message' => 'required|string',
+            ]);
 
-    $ride = Ride::with(['driver.user', 'passenger'])->findOrFail($request->ride_id);
-    $sender = $request->user();
+            $ride = Ride::findOrFail($request->ride_id);
+            $sender = $request->user();
 
-    // Get driver's user_id
-    $driverUserId = $ride->driver->user_id;
-    $passengerUserId = $ride->passenger_id;
+            $driverUserId = $ride->driver_id;
+            $passengerUserId = $ride->passenger_id;
 
-    if (!in_array($sender->id, [$driverUserId, $passengerUserId])) {
-        abort(403, 'Unauthorized');
-    }
+            if (!in_array($sender->id, [$driverUserId, $passengerUserId])) {
+                abort(403, 'Unauthorized');
+            }
 
-    $receiverId = ($sender->id === $driverUserId) ? $passengerUserId : $driverUserId;
+            $receiverId = ($sender->id === $driverUserId) ? $passengerUserId : $driverUserId;
 
-    $chat = Chat::create([
-        'ride_id' => $ride->id,
-        'sender_id' => $sender->id,
-        'receiver_id' => $receiverId,
-        'message' => $request->message,
-    ]);
+            $chat = Chat::create([
+                'ride_id' => $ride->id,
+                'sender_id' => $sender->id,
+                'receiver_id' => $receiverId,
+                'message' => $request->message,
+            ]);
 
-    // Load relationships
-    $chat->load(['sender', 'receiver']);
+            $chat->load(['sender', 'receiver']);
 
-    event(new NewMessageEvent($chat));
+            // Commented out if not using broadcasting
+            // event(new NewMessageEvent($chat));
 
-    return response()->json($chat, 201);
-}
+            return response()->json($chat, 201);
+        }
+
+
 
     public function show(Ride $ride, Request $request)
     {

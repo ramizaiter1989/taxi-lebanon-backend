@@ -13,12 +13,7 @@ class Chat extends Model
     use HasFactory;
 
     // Mass assignable fields
-    protected $fillable = [
-        'ride_id',
-        'sender_id',
-        'receiver_id',
-        'message',
-    ];
+    protected $fillable = [ 'ride_id', 'sender_id', 'receiver_id', 'message', 'message_type', 'is_read' ];
 
     /**
      * The ride this chat belongs to
