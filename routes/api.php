@@ -20,8 +20,12 @@ use App\Http\Controllers\Api\BenzConsumptionController;
     Route::post('login', [AuthController::class, 'login']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
 
+// In routes/api.php - PROTECTED ROUTES
+Route::middleware('auth:sanctum')->group(function () {
     Route::post('/chat', [ChatController::class, 'store']);
     Route::get('/chat/{ride}', [ChatController::class, 'show']);
+    Route::post('/chat/{ride}/mark-read', [ChatController::class, 'markAsRead']);
+});
 
 // OTP Verification (Public)
 Route::prefix('otp')->group(function () {

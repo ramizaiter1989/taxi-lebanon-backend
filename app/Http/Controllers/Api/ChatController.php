@@ -11,32 +11,39 @@ use Illuminate\Support\Facades\Log;
 class ChatController extends Controller
 {
     public function store(Request $request)
-    {
-        $request->validate([
-            'ride_id' => 'required|exists:rides,id',
-            'message' => 'required|string',
-        ]);
+{
+    $request->validate([
+        'ride_id' => 'required|exists:rides,id',
+        'message' => 'required|string',
+    ]);
 
-        $ride = Ride::findOrFail($request->ride_id);
-        $sender = $request->user();
+    $ride = Ride::with(['driver.user', 'passenger'])->findOrFail($request->ride_id);
+    $sender = $request->user();
 
-        if (!in_array($sender->id, [$ride->driver_id, $ride->passenger_id])) {
-            abort(403, 'Unauthorized');
-        }
+    // Get driver's user_id
+    $driverUserId = $ride->driver->user_id;
+    $passengerUserId = $ride->passenger_id;
 
-        $receiverId = ($sender->id === $ride->driver_id) ? $ride->passenger_id : $ride->driver_id;
-
-        $chat = Chat::create([
-            'ride_id' => $ride->id,
-            'sender_id' => $sender->id,
-            'receiver_id' => $receiverId,
-            'message' => $request->message,
-        ]);
-
-        event(new NewMessageEvent($chat));
-
-        return response()->json($chat, 201);
+    if (!in_array($sender->id, [$driverUserId, $passengerUserId])) {
+        abort(403, 'Unauthorized');
     }
+
+    $receiverId = ($sender->id === $driverUserId) ? $passengerUserId : $driverUserId;
+
+    $chat = Chat::create([
+        'ride_id' => $ride->id,
+        'sender_id' => $sender->id,
+        'receiver_id' => $receiverId,
+        'message' => $request->message,
+    ]);
+
+    // Load relationships
+    $chat->load(['sender', 'receiver']);
+
+    event(new NewMessageEvent($chat));
+
+    return response()->json($chat, 201);
+}
 
     public function show(Ride $ride, Request $request)
     {
@@ -57,4 +64,16 @@ class ChatController extends Controller
 
         return response()->json($chats);
     }
+
+    public function markAsRead(Request $request, Ride $ride)
+{
+    $user = $request->user();
+    
+    Chat::where('ride_id', $ride->id)
+        ->where('receiver_id', $user->id)
+        ->where('is_read', false)
+        ->update(['is_read' => true]);
+    
+    return response()->json(['message' => 'Messages marked as read']);
+}
 }

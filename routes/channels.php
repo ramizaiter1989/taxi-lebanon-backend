@@ -120,3 +120,7 @@ Broadcast::channel('passenger.{userId}', function ($user, $userId) {
 Broadcast::channel('driver.{userId}', function ($user, $userId) {
     return (int) $user->id === (int) $userId && $user->role === 'driver';
 });
+
+Broadcast::channel('chat.{userId}', function ($user, $userId) {
+    return (int) $user->id === (int) $userId;
+});
