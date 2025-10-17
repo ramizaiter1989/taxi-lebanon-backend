@@ -121,6 +121,24 @@ Broadcast::channel('driver.{userId}', function ($user, $userId) {
     return (int) $user->id === (int) $userId && $user->role === 'driver';
 });
 
+//chat channels
+
 Broadcast::channel('chat.{userId}', function ($user, $userId) {
     return (int) $user->id === (int) $userId;
+});
+
+Broadcast::channel('ride-chat.{rideId}', function ($user, $rideId) {
+    $ride = Ride::find($rideId);
+    if (!$ride) return false;
+
+    // Passenger
+    if ($user->id === $ride->passenger_id) return ['id' => $user->id, 'role' => 'passenger'];
+    
+    // Driver
+    if ($user->driver && $user->driver->id === $ride->driver_id) return ['id' => $user->id, 'role' => 'driver'];
+    
+    // Admin
+    if ($user->role === 'admin') return ['id' => $user->id, 'role' => 'admin'];
+
+    return false;
 });

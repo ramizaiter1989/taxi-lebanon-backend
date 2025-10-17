@@ -19,7 +19,9 @@ use App\Http\Controllers\Api\BenzConsumptionController;
     Route::post('register', [AuthController::class, 'register']);
     Route::post('login', [AuthController::class, 'login']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
-
+    Route::post('/broadcasting/auth', function (Request $request) {
+    return Broadcast::auth($request);
+})->middleware('auth:api');
 // In routes/api.php - PROTECTED ROUTES
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/chat', [ChatController::class, 'store']);

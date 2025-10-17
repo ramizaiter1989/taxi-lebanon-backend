@@ -3,9 +3,10 @@
 namespace App\Events;
 
 use App\Models\Chat;
-use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Queue\SerializesModels;
+use App\Http\Resources\ChatResource;
 
 class NewMessageEvent implements ShouldBroadcast
 {
@@ -15,12 +16,12 @@ class NewMessageEvent implements ShouldBroadcast
 
     public function __construct(Chat $chat)
     {
-        $this->chat = $chat->load(['sender', 'receiver']);
+        $this->chat = new ChatResource($chat->load(['sender', 'receiver']));
     }
 
     public function broadcastOn()
     {
-        return new Channel('chat.' . $this->chat->ride_id);
+        return new PrivateChannel('ride.' . $this->chat->ride_id);
     }
 
     public function broadcastAs()
