@@ -9,7 +9,7 @@ use App\Http\Controllers\Api\PassengerController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Auth\OtpController;
-
+use App\Http\Controllers\Api\ChatController;
 use App\Http\Controllers\Api\BenzConsumptionController;
 
 // ========================================
@@ -20,6 +20,8 @@ use App\Http\Controllers\Api\BenzConsumptionController;
     Route::post('login', [AuthController::class, 'login']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
 
+    Route::post('/chat', [ChatController::class, 'store']);
+    Route::get('/chat/{ride}', [ChatController::class, 'show']);
 
 // OTP Verification (Public)
 Route::prefix('otp')->group(function () {

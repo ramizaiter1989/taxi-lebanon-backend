@@ -54,6 +54,11 @@ class Ride extends Model
     public function passenger() { return $this->belongsTo(User::class, 'passenger_id'); }
     public function driver() { return $this->belongsTo(Driver::class, 'driver_id'); }
     public function rideLogs() { return $this->hasMany(RideLog::class); }
+    public function chats()
+    {
+        return $this->hasMany(Chat::class);
+    }
+
 
     public function getDurationsAttribute()
     {
