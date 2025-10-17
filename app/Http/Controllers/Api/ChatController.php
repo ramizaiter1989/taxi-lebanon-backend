@@ -17,10 +17,15 @@ class ChatController extends Controller
                 'message' => 'required|string',
             ]);
 
-            $ride = Ride::findOrFail($request->ride_id);
+            $ride = Ride::with('driver')->findOrFail($request->ride_id);
             $sender = $request->user();
 
-            $driverUserId = $ride->driver_id;
+            // Defensive checks
+            if (!$ride->driver) {
+                return response()->json(['error' => 'No driver assigned to this ride yet'], 400);
+            }
+
+            $driverUserId = $ride->driver->user_id; // gets the actual user ID of the driver
             $passengerUserId = $ride->passenger_id;
 
             if (!in_array($sender->id, [$driverUserId, $passengerUserId])) {
@@ -46,11 +51,12 @@ class ChatController extends Controller
 
 
 
+
     public function show(Ride $ride, Request $request)
     {
         $user = $request->user();
 
-        if (!in_array($user->id, [$ride->driver_id, $ride->passenger_id])) {
+        if (!in_array($user->id, [$ride->driver->user_id, $ride->passenger_id])) {
             abort(403, 'Unauthorized');
         }
 

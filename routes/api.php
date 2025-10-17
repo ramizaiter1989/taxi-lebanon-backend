@@ -96,7 +96,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('location', [PassengerController::class, 'updateLocation']);
         Route::get('rides', [RideController::class, 'index']);
         Route::get('rides/history', [RideController::class, 'history']);
-        Route::get('rides/current', [RideController::class, 'current']);
+        Route::get('rides/live', [RideController::class, 'current']);
         Route::prefix('favorite-places')->group(function () {
             Route::get('/', [PassengerController::class, 'getFavoritePlaces']);
             Route::post('/', [PassengerController::class, 'saveFavoritePlace']);
