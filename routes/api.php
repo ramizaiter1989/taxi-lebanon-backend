@@ -20,8 +20,10 @@ use Illuminate\Support\Facades\Broadcast;
     Route::post('register', [AuthController::class, 'register']);
     Route::post('login', [AuthController::class, 'login']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
+
     Route::post('/broadcasting/auth', function (Request $request) {
     return Broadcast::auth($request);})->middleware('auth:sanctum');
+    
 // In routes/api.php - PROTECTED ROUTES
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/chat', [ChatController::class, 'store']);
