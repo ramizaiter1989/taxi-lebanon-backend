@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\AdminController;
 use App\Http\Controllers\Auth\OtpController;
 use App\Http\Controllers\Api\ChatController;
 use App\Http\Controllers\Api\BenzConsumptionController;
+use Illuminate\Support\Facades\Broadcast;
 
 // ========================================
 // PUBLIC API ROUTES (No Authentication)
@@ -20,8 +21,7 @@ use App\Http\Controllers\Api\BenzConsumptionController;
     Route::post('login', [AuthController::class, 'login']);
     Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
     Route::post('/broadcasting/auth', function (Request $request) {
-    return Broadcast::auth($request);
-})->middleware('auth:api');
+    return Broadcast::auth($request);})->middleware('auth:sanctum');
 // In routes/api.php - PROTECTED ROUTES
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/chat', [ChatController::class, 'store']);
