@@ -1,6 +1,7 @@
 <?php 
 return [
-    'default' => env('BROADCAST_DRIVER', 'pusher'), // Change 'null' to 'pusher'
+    'default' => env('BROADCAST_DRIVER', 'null'),
+
     'connections' => [
         'pusher' => [
             'driver' => 'pusher',
@@ -9,7 +10,7 @@ return [
             'app_id' => env('PUSHER_APP_ID'),
             'options' => [
                 'cluster' => env('PUSHER_APP_CLUSTER', 'eu'),
-                'useTLS' => env('PUSHER_APP_USE_TLS', true),
+                'useTLS' => true,
             ],
         ],
     ],
