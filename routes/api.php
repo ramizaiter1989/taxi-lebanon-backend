@@ -23,12 +23,17 @@ use Illuminate\Support\Facades\Broadcast;
 
     Route::post('/broadcasting/auth', function (Request $request) {
     return Broadcast::auth($request);})->middleware('auth:sanctum');
-    
+
 // In routes/api.php - PROTECTED ROUTES
 Route::middleware('auth:sanctum')->group(function () {
+    // Existing routes
     Route::post('/chat', [ChatController::class, 'store']);
     Route::get('/chat/{ride}', [ChatController::class, 'show']);
     Route::post('/chat/{ride}/mark-read', [ChatController::class, 'markAsRead']);
+    
+    // New optional routes
+    Route::get('/chat/{ride}/unread-count', [ChatController::class, 'unreadCount']);
+    Route::get('/chat/unread-count', [ChatController::class, 'allUnreadCount']);
 });
 
 // OTP Verification (Public)
