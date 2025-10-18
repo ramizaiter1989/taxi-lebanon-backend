@@ -37,20 +37,20 @@ Route::prefix('otp')->group(function () {
 });
 
 // Email Verification (Public)
-Route::get('/email/verify/{id}/{hash}', [\App\Http\Controllers\Auth\VerifyEmailController::class, '__invoke'])
-    ->middleware(['signed', 'throttle:6,1'])
-    ->name('verification.verify');
-Route::post('/email/verification-notification', [\App\Http\Controllers\Auth\EmailVerificationNotificationController::class, 'store'])
-    ->middleware('auth:sanctum')
-    ->name('verification.send');
+// Route::get('/email/verify/{id}/{hash}', [\App\Http\Controllers\Auth\VerifyEmailController::class, '__invoke'])
+//     ->middleware(['signed', 'throttle:6,1'])
+//     ->name('verification.verify');
+// Route::post('/email/verification-notification', [\App\Http\Controllers\Auth\EmailVerificationNotificationController::class, 'store'])
+//     ->middleware('auth:sanctum')
+//     ->name('verification.send');
 
 // Password Reset (Public)
-Route::post('/forgot-password', [\App\Http\Controllers\Auth\PasswordResetLinkController::class, 'store'])
-    ->middleware('guest')
-    ->name('password.email');
-Route::post('/reset-password', [\App\Http\Controllers\Auth\NewPasswordController::class, 'store'])
-    ->middleware('guest')
-    ->name('password.store');
+// Route::post('/forgot-password', [\App\Http\Controllers\Auth\PasswordResetLinkController::class, 'store'])
+//     ->middleware('guest')
+//     ->name('password.email');
+// Route::post('/reset-password', [\App\Http\Controllers\Auth\NewPasswordController::class, 'store'])
+//     ->middleware('guest')
+//     ->name('password.store');
 
 // ========================================
 // PROTECTED API ROUTES (Require Auth)
