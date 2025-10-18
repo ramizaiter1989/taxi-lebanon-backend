@@ -4,11 +4,11 @@ namespace App\Events;
 
 use App\Models\Chat;
 use Illuminate\Broadcasting\PrivateChannel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow; // Changed from ShouldBroadcast
 use Illuminate\Queue\SerializesModels;
 use App\Http\Resources\ChatResource;
 
-class NewMessageEvent implements ShouldBroadcast
+class NewMessageEvent implements ShouldBroadcastNow // This makes it broadcast instantly!
 {
     use SerializesModels;
 
@@ -27,5 +27,18 @@ class NewMessageEvent implements ShouldBroadcast
     public function broadcastAs()
     {
         return 'NewMessageEvent';
+    }
+
+    // Optional: Add this to see what data is being broadcast
+    public function broadcastWith()
+    {
+        \Log::info('Broadcasting message:', [
+            'chat_id' => $this->chat->id ?? 'unknown',
+            'ride_id' => $this->chat->ride_id ?? 'unknown'
+        ]);
+        
+        return [
+            'chat' => $this->chat
+        ];
     }
 }
