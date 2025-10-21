@@ -84,6 +84,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Driver Routes
     Route::prefix('driver')->group(function () {
+        Route::post('license', [AuthController::class, 'completeDriverProfile']);
         Route::get('profile', [DriverController::class, 'showProfile']);
         Route::put('profile', [DriverController::class, 'updateProfile']);
         Route::post('go-online', [DriverController::class, 'goOnline']);
