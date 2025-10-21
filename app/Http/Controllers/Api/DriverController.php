@@ -532,7 +532,7 @@ public function updateProfile(Request $request, Driver $driver)
         $this->authorizeDriver($driver);
 
         $request->validate([
-            'scanning_range_km' => 'required|numeric|min:1|max:50',
+            'scanning_range_km' => 'required|numeric|min:1|max:5000',
         ]);
 
         $driver->update([
