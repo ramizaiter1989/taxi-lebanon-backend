@@ -215,7 +215,7 @@ class RideController extends Controller
             return response()->json(['error' => 'Only drivers can view available rides'], 403);
         }
         
-        if ($driver->availability_status !== 'available') {
+        if ($driver->availability_status !== true) {
             return response()->json(['error' => 'Driver must be available to view rides'], 400);
         }
         
@@ -332,7 +332,7 @@ class RideController extends Controller
             $ride->save();
 
             // Update driver status
-            $driver->availability_status = 'busy';
+            $driver->availability_status = false;
             $driver->save();
 
             // Calculate ETA
@@ -487,7 +487,7 @@ class RideController extends Controller
             $ride->save();
 
             // Update driver status back to available
-            $driver->availability_status = 'available';
+            $driver->availability_status = true;
             $driver->save();
 
             // Notify passenger
@@ -553,7 +553,7 @@ class RideController extends Controller
 
             // If driver cancels, make them available again
             if ($isDriver && $ride->driver) {
-                $ride->driver->availability_status = 'available';
+                $ride->driver->availability_status = true;
                 $ride->driver->save();
             }
 
