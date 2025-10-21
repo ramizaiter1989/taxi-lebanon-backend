@@ -127,32 +127,34 @@ private function sendSms($phone, $otpCode)
     // Verify OTP
   public function verifyOtp(Request $request)
 {
-
     $request->merge([
         'phone' => trim($request->phone),
         'code'  => trim($request->code),
     ]);
-    
+
     $request->validate([
         'phone' => 'required|string',
-        'code' => 'required|string'
+        'code' => 'required|string|digits:6',
     ]);
 
-    $otp = Otp::where('phone', $request->phone)
+    // Normalize phone number (remove all non-digits)
+    $phone = preg_replace('/\D/', '', $request->phone);
+
+    $otp = Otp::whereRaw("REPLACE(phone, '+', '') = ?", [$phone])
               ->where('code', $request->code)
               ->first();
 
     if (!$otp) {
-        return response()->json(['error' => 'Invalid OTP'], 422);
+        return response()->json(['error' => 'OTP does not match. Please check the code.'], 422);
     }
 
     if ($otp->isExpired()) {
-        return response()->json(['error' => 'OTP expired'], 422);
+        return response()->json(['error' => 'OTP expired. Please request a new one.'], 422);
     }
 
-    $user = User::where('phone', $request->phone)->first();
+    $user = User::whereRaw("REPLACE(phone, '+', '') = ?", [$phone])->first();
     if (!$user) {
-        return response()->json(['error' => 'User not found'], 404);
+        return response()->json(['error' => 'User not found.'], 404);
     }
 
     $user->is_verified = true;
@@ -160,8 +162,9 @@ private function sendSms($phone, $otpCode)
 
     $otp->delete();
 
-    return response()->json(['message' => 'OTP verified successfully']);
+    return response()->json(['message' => 'OTP verified successfully.']);
 }
+
 
 
 }

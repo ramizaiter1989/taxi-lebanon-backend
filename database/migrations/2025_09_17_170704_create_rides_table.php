@@ -33,7 +33,8 @@ return new class extends Migration
                 'accepted',     // driver accepted
                 'in_progress',  // ride started (driver & passenger traveling to destination)
                 'arrived',      // driver reached destination (within ~5m) OR passenger ends early; fare later added to driver balance
-                'cancelled'     // ride cancelled
+                'cancelled',     // ride cancelled
+                'completed' 
             ])->default('pending');
 
             // Fare info
