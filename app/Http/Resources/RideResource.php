@@ -222,15 +222,18 @@ class RideResource extends JsonResource
 
     /**
      * Get current location info (for tracking during ride)
+     * FIXED: Access driver location from driver relationship
      */
     protected function getCurrentLocationInfo()
     {
+        // Check if ride is active AND driver exists AND has current location
         if (in_array($this->status, ['accepted', 'in_progress', 'arrived']) && 
-            $this->current_driver_lat && 
-            $this->current_driver_lng) {
+            $this->driver && 
+            $this->driver->current_driver_lat && 
+            $this->driver->current_driver_lng) {
             return [
-                'lat' => (float)$this->current_driver_lat,
-                'lng' => (float)$this->current_driver_lng,
+                'lat' => (float)$this->driver->current_driver_lat,
+                'lng' => (float)$this->driver->current_driver_lng,
             ];
         }
 

@@ -201,18 +201,22 @@ class RideController extends Controller
     }
 
     // GET /api/rides/live - Current active ride for passenger
-    public function current(Request $request)
-    {
-        $user = $request->user();
+public function current(Request $request)
+{
+    $user = $request->user();
 
-        $ride = Ride::where('passenger_id', $user->id)
-            ->whereIn('status', ['pending', 'accepted', 'in_progress', 'arrived'])
-            ->latest()
-            ->with(['driver.user', 'passenger'])
-            ->first();
+    $ride = Ride::where('passenger_id', $user->id)
+        ->whereIn('status', ['pending', 'accepted', 'in_progress', 'arrived'])
+        ->latest()
+        ->with(['driver.user', 'passenger'])
+        ->first();
 
-        return $ride ? new RideResource($ride) : response()->json(['ride' => null]);
+    if (!$ride) {
+        return response()->json(['ride' => null]);
     }
+
+    return new RideResource($ride);
+}
 
     // GET /api/rides/available - Available rides for driver
     public function availableRides(Request $request, GeocodingService $geocodingService)
