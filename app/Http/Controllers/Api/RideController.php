@@ -203,19 +203,30 @@ class RideController extends Controller
     // GET /api/rides/live - Current active ride for passenger
 public function current(Request $request)
 {
-    $user = $request->user();
+    try {
+        $user = $request->user();
 
-    $ride = Ride::where('passenger_id', $user->id)
-        ->whereIn('status', ['pending', 'accepted', 'in_progress', 'arrived'])
-        ->latest()
-        ->with(['driver.user', 'passenger'])
-        ->first();
+        $ride = Ride::where('passenger_id', $user->id)
+            ->whereIn('status', ['pending', 'accepted', 'in_progress', 'arrived'])
+            ->latest()
+            ->with(['driver.user', 'passenger'])
+            ->first();
 
-    if (!$ride) {
-        return response()->json(['ride' => null]);
+        if (!$ride) {
+            return response()->json(['ride' => null]);
+        }
+
+        return new RideResource($ride);
+        
+    } catch (\Exception $e) {
+        \Log::error('Ride current error: ' . $e->getMessage());
+        \Log::error('Stack trace: ' . $e->getTraceAsString());
+        
+        return response()->json([
+            'error' => 'Failed to fetch current ride',
+            'message' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+        ], 500);
     }
-
-    return new RideResource($ride);
 }
 
     // GET /api/rides/available - Available rides for driver

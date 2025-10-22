@@ -1,5 +1,5 @@
 <?php
-// app/Models/Ride.php
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -17,8 +17,6 @@ class Ride extends Model
         'fare',
         'distance',
         'duration',
-        'current_driver_lat',
-        'current_driver_lng',
         'cancellation_reason',
         'cancellation_note',
         'cancelled_by',
@@ -30,6 +28,10 @@ class Ride extends Model
         'final_fare',
         'sos_triggered',
         'sos_triggered_at',
+        'accepted_at',
+        'started_at',
+        'arrived_at',
+        'completed_at',
     ];
 
     protected $casts = [
@@ -41,25 +43,49 @@ class Ride extends Model
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
         'arrived_at' => 'datetime',
+        'accepted_at' => 'datetime',
+        'origin_lat' => 'decimal:7',
+        'origin_lng' => 'decimal:7',
+        'destination_lat' => 'decimal:7',
+        'destination_lng' => 'decimal:7',
+        'fare' => 'decimal:2',
+        'distance' => 'decimal:2',
+        'duration' => 'decimal:1',
     ];
 
+    // REMOVED current_driver_lat and current_driver_lng from appends
     protected $appends = [
         'durations',
-        'current_driver_lat',
-        'current_driver_lng',
         'calculated_fare',
     ];
 
-    // relations...
-    public function passenger() { return $this->belongsTo(User::class, 'passenger_id'); }
-    public function driver() { return $this->belongsTo(Driver::class, 'driver_id'); }
-    public function rideLogs() { return $this->hasMany(RideLog::class); }
+    // Relations
+    public function passenger() 
+    { 
+        return $this->belongsTo(User::class, 'passenger_id'); 
+    }
+    
+    public function driver() 
+    { 
+        return $this->belongsTo(Driver::class, 'driver_id'); 
+    }
+    
+    public function rideLogs() 
+    { 
+        return $this->hasMany(RideLog::class); 
+    }
+    
     public function chats()
     {
         return $this->hasMany(Chat::class);
     }
 
+    public function promoCode()
+    {
+        return $this->belongsTo(PromoCode::class);
+    }
 
+    // Accessors
     public function getDurationsAttribute()
     {
         $log = $this->rideLogs()->latest()->first();
@@ -68,16 +94,6 @@ class Ride extends Model
             'trip'   => $log->trip_duration_seconds ?? 0,
             'total'  => $log->total_duration_seconds ?? 0,
         ];
-    }
-
-    public function getCurrentDriverLatAttribute()
-    {
-        return $this->rideLogs()->latest()->first()?->driver_lat ?? null;
-    }
-
-    public function getCurrentDriverLngAttribute()
-    {
-        return $this->rideLogs()->latest()->first()?->driver_lng ?? null;
     }
 
     // Expose the stored fare if present
@@ -124,7 +140,6 @@ class Ride extends Model
 
     /**
      * Optionally recalculate fare if distance/duration changed.
-     * Here we use saving to keep behavior predictable (you can switch to updating/upsert)
      */
     protected static function booted()
     {
@@ -132,9 +147,9 @@ class Ride extends Model
             // If distance/duration are dirty and both present -> recalc and set fare
             if ($ride->isDirty(['distance', 'duration'])) {
                 if ($ride->distance && $ride->duration) {
-                    $calculated = $ride->calculateFare(false); // calculate but don't save inside
+                    $calculated = $ride->calculateFare(false);
                     if ($calculated !== null) {
-                        $ride->fare = $calculated; // set before save so it's persisted in same query
+                        $ride->fare = $calculated;
                     }
                 }
             }

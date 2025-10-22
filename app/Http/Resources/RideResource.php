@@ -65,13 +65,11 @@ class RideResource extends JsonResource
                 
                 return [
                     'id' => $this->driver->id,
-                    'vehicle_type' => $this->driver->vehicle_type,
-                    'vehicle_model' => $this->driver->vehicle_model,
-                    'vehicle_color' => $this->driver->vehicle_color,
-                    'license_plate' => $this->driver->license_plate,
+                    'vehicle_type' => $this->driver->vehicle_type ?? null,
+                    'vehicle_number' => $this->driver->vehicle_number ?? null,
+                    'license_number' => $this->driver->license_number ?? null,
                     'rating' => $this->driver->rating ? round($this->driver->rating, 1) : null,
-                    'total_rides' => $this->driver->total_rides ?? 0,
-                    'availability_status' => $this->driver->availability_status,
+                    'availability_status' => $this->driver->availability_status ?? false,
                     'current_location' => [
                         'lat' => $this->driver->current_driver_lat ? (float)$this->driver->current_driver_lat : null,
                         'lng' => $this->driver->current_driver_lng ? (float)$this->driver->current_driver_lng : null,
@@ -82,8 +80,8 @@ class RideResource extends JsonResource
                         'name' => $this->driver->user->name,
                         'phone' => $this->shouldShowPhone() ? $this->driver->user->phone : null,
                         'email' => $this->shouldShowEmail() ? $this->driver->user->email : null,
-                        'gender' => $this->driver->user->gender,
-                        'profile_photo' => $this->driver->user->profile_photo,
+                        'gender' => $this->driver->user->gender ?? null,
+                        'profile_photo' => $this->driver->user->profile_photo ?? null,
                     ] : null,
                 ];
             }),
@@ -98,9 +96,8 @@ class RideResource extends JsonResource
                     'name' => $this->passenger->name,
                     'phone' => $this->shouldShowPhone() ? $this->passenger->phone : null,
                     'email' => $this->shouldShowEmail() ? $this->passenger->email : null,
-                    'gender' => $this->passenger->gender,
-                    'profile_photo' => $this->passenger->profile_photo,
-                    'rating' => $this->passenger->rating ? round($this->passenger->rating, 1) : null,
+                    'gender' => $this->passenger->gender ?? null,
+                    'profile_photo' => $this->passenger->profile_photo ?? null,
                 ];
             }),
             
@@ -135,7 +132,11 @@ class RideResource extends JsonResource
         $cacheKey = "address_{$lat}_{$lng}";
         
         return Cache::remember($cacheKey, 3600, function () use ($lat, $lng, $geocodingService) {
-            return $geocodingService->getAddress($lat, $lng) ?? 'Address unavailable';
+            try {
+                return $geocodingService->getAddress($lat, $lng) ?? 'Address unavailable';
+            } catch (\Exception $e) {
+                return 'Address unavailable';
+            }
         });
     }
 
@@ -151,21 +152,25 @@ class RideResource extends JsonResource
         $cacheKey = "driver_eta_{$this->id}_{$this->driver->id}";
         
         return Cache::remember($cacheKey, 180, function () use ($routeService) {
-            $eta = $routeService->getRouteInfo(
-                $this->driver->current_driver_lat,
-                $this->driver->current_driver_lng,
-                $this->origin_lat,
-                $this->origin_lng
-            );
+            try {
+                $eta = $routeService->getRouteInfo(
+                    $this->driver->current_driver_lat,
+                    $this->driver->current_driver_lng,
+                    $this->origin_lat,
+                    $this->origin_lng
+                );
 
-            if ($eta) {
-                return [
-                    'distance_meters' => $eta['distance'],
-                    'distance_km' => round($eta['distance'] / 1000, 2),
-                    'duration_seconds' => $eta['duration'],
-                    'duration_minutes' => round($eta['duration'] / 60, 1),
-                    'duration_text' => $this->formatDuration($eta['duration']),
-                ];
+                if ($eta) {
+                    return [
+                        'distance_meters' => $eta['distance'],
+                        'distance_km' => round($eta['distance'] / 1000, 2),
+                        'duration_seconds' => $eta['duration'],
+                        'duration_minutes' => round($eta['duration'] / 60, 1),
+                        'duration_text' => $this->formatDuration($eta['duration']),
+                    ];
+                }
+            } catch (\Exception $e) {
+                \Log::error('Driver ETA error: ' . $e->getMessage());
             }
 
             return null;
@@ -192,21 +197,25 @@ class RideResource extends JsonResource
         $cacheKey = "trip_info_{$this->origin_lat}_{$this->origin_lng}_{$this->destination_lat}_{$this->destination_lng}";
         
         return Cache::remember($cacheKey, 3600, function () use ($routeService) {
-            $tripInfo = $routeService->getRouteInfo(
-                $this->origin_lat,
-                $this->origin_lng,
-                $this->destination_lat,
-                $this->destination_lng
-            );
+            try {
+                $tripInfo = $routeService->getRouteInfo(
+                    $this->origin_lat,
+                    $this->origin_lng,
+                    $this->destination_lat,
+                    $this->destination_lng
+                );
 
-            if ($tripInfo) {
-                return [
-                    'distance_meters' => $tripInfo['distance'],
-                    'distance_km' => round($tripInfo['distance'] / 1000, 2),
-                    'duration_seconds' => $tripInfo['duration'],
-                    'duration_minutes' => round($tripInfo['duration'] / 60, 1),
-                    'duration_text' => $this->formatDuration($tripInfo['duration']),
-                ];
+                if ($tripInfo) {
+                    return [
+                        'distance_meters' => $tripInfo['distance'],
+                        'distance_km' => round($tripInfo['distance'] / 1000, 2),
+                        'duration_seconds' => $tripInfo['duration'],
+                        'duration_minutes' => round($tripInfo['duration'] / 60, 1),
+                        'duration_text' => $this->formatDuration($tripInfo['duration']),
+                    ];
+                }
+            } catch (\Exception $e) {
+                \Log::error('Trip info error: ' . $e->getMessage());
             }
 
             // Fallback values
@@ -222,7 +231,7 @@ class RideResource extends JsonResource
 
     /**
      * Get current location info (for tracking during ride)
-     * FIXED: Access driver location from driver relationship
+     * Gets location from driver relationship
      */
     protected function getCurrentLocationInfo()
     {
