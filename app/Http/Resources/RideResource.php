@@ -116,13 +116,6 @@ class RideResource extends JsonResource
 
     /**
      * Get route information based on ride phase
-     * 
-     * Phases:
-     * - pending: No route info (waiting for driver)
-     * - accepted: Driver → Pickup (origin)
-     * - arrived: Driver at pickup, show trip route (origin → destination)
-     * - in_progress: Active trip (origin → destination)
-     * - completed/cancelled: Show completed trip info
      */
     protected function getPhaseRouteInfo($routeService)
     {
@@ -130,23 +123,18 @@ class RideResource extends JsonResource
 
         switch ($phase) {
             case 'to_pickup':
-                // Driver accepted, heading to pickup
                 return $this->getDriverToPickupInfo($routeService);
                 
             case 'at_pickup':
-                // Driver arrived at pickup, waiting for passenger
                 return $this->getTripRouteInfo($routeService);
                 
             case 'in_trip':
-                // Ride in progress
                 return $this->getTripRouteInfo($routeService);
                 
             case 'completed':
-                // Ride completed, show final stats
                 return $this->getCompletedTripInfo();
                 
             default:
-                // Pending or other states
                 return $this->getTripRouteInfo($routeService);
         }
     }
@@ -174,51 +162,121 @@ class RideResource extends JsonResource
     /**
      * Get driver to pickup information (accepted phase)
      * Calculate: Driver's current location → Pickup (origin)
+     * NOTE: RouteService expects (lng, lat) not (lat, lng)!
      */
     protected function getDriverToPickupInfo($routeService)
     {
         if (!$this->driver || 
             !$this->driver->current_driver_lat || 
             !$this->driver->current_driver_lng) {
-            return $this->getTripRouteInfo($routeService); // Fallback
+            
+            \Log::warning('Driver location not available for ride ' . $this->id);
+            return $this->getTripRouteInfo($routeService);
         }
 
-        $cacheKey = "driver_to_pickup_{$this->id}_{$this->driver->current_driver_lat}_{$this->driver->current_driver_lng}";
+        // Don't cache too long - driver location changes frequently
+        $cacheKey = "driver_to_pickup_{$this->id}_" . floor(time() / 30); // Cache for 30 seconds
         
-        return Cache::remember($cacheKey, 60, function () use ($routeService) {
+        try {
+            // FIXED: Pass coordinates in correct order (lng, lat)
+            $pickupRoute = $routeService->getRouteInfo(
+                $this->driver->current_driver_lng,  // lng first
+                $this->driver->current_driver_lat,  // lat second
+                $this->origin_lng,                  // lng first
+                $this->origin_lat                   // lat second
+            );
+
+            \Log::info('Pickup route calculated', [
+                'ride_id' => $this->id,
+                'driver_location' => [$this->driver->current_driver_lat, $this->driver->current_driver_lng],
+                'pickup_location' => [$this->origin_lat, $this->origin_lng],
+                'result' => $pickupRoute
+            ]);
+
+            if ($pickupRoute && isset($pickupRoute['distance']) && isset($pickupRoute['duration'])) {
+                // Also get trip route for display
+                $tripRoute = $this->calculateTripRoute($routeService);
+
+                return [
+                    'phase' => 'to_pickup',
+                    'description' => 'Driver heading to pickup location',
+                    'pickup_eta' => [
+                        'distance_meters' => $pickupRoute['distance'],
+                        'distance_km' => round($pickupRoute['distance'] / 1000, 2),
+                        'duration_seconds' => $pickupRoute['duration'],
+                        'duration_minutes' => round($pickupRoute['duration'] / 60, 1),
+                        'duration_text' => $this->formatDuration($pickupRoute['duration']),
+                    ],
+                    'trip_route' => $tripRoute,
+                ];
+            }
+        } catch (\Exception $e) {
+            \Log::error('Driver to pickup route error: ' . $e->getMessage(), [
+                'ride_id' => $this->id,
+                'trace' => $e->getTraceAsString()
+            ]);
+        }
+
+        // Fallback to trip route only
+        return $this->getTripRouteInfo($routeService);
+    }
+
+    /**
+     * Calculate trip route (origin → destination)
+     * NOTE: RouteService expects (lng, lat) not (lat, lng)!
+     */
+    protected function calculateTripRoute($routeService)
+    {
+        // Cache trip route for longer since origin/destination don't change
+        $cacheKey = "trip_route_{$this->origin_lat}_{$this->origin_lng}_{$this->destination_lat}_{$this->destination_lng}";
+        
+        return Cache::remember($cacheKey, 3600, function () use ($routeService) {
             try {
-                $pickupRoute = $routeService->getRouteInfo(
-                    $this->driver->current_driver_lat,
-                    $this->driver->current_driver_lng,
-                    $this->origin_lat,
-                    $this->origin_lng
+                // FIXED: Pass coordinates in correct order (lng, lat)
+                $tripRoute = $routeService->getRouteInfo(
+                    $this->origin_lng,      // lng first
+                    $this->origin_lat,      // lat second
+                    $this->destination_lng, // lng first
+                    $this->destination_lat  // lat second
                 );
 
-                if ($pickupRoute) {
+                if ($tripRoute && isset($tripRoute['distance']) && isset($tripRoute['duration'])) {
                     return [
-                        'phase' => 'to_pickup',
-                        'description' => 'Driver heading to pickup location',
-                        'pickup_eta' => [
-                            'distance_meters' => $pickupRoute['distance'],
-                            'distance_km' => round($pickupRoute['distance'] / 1000, 2),
-                            'duration_seconds' => $pickupRoute['duration'],
-                            'duration_minutes' => round($pickupRoute['duration'] / 60, 1),
-                            'duration_text' => $this->formatDuration($pickupRoute['duration']),
-                        ],
-                        'trip_route' => $this->getTripRouteInfo($routeService),
+                        'distance_meters' => $tripRoute['distance'],
+                        'distance_km' => round($tripRoute['distance'] / 1000, 2),
+                        'duration_seconds' => $tripRoute['duration'],
+                        'duration_minutes' => round($tripRoute['duration'] / 60, 1),
+                        'duration_text' => $this->formatDuration($tripRoute['duration']),
                     ];
                 }
             } catch (\Exception $e) {
-                \Log::error('Driver to pickup error: ' . $e->getMessage());
+                \Log::error('Trip route calculation error: ' . $e->getMessage());
             }
 
-            return $this->getTripRouteInfo($routeService);
+            // Use stored values if available
+            if ($this->distance && $this->duration) {
+                return [
+                    'distance_meters' => $this->distance * 1000,
+                    'distance_km' => round($this->distance, 2),
+                    'duration_seconds' => $this->duration * 60,
+                    'duration_minutes' => round($this->duration, 1),
+                    'duration_text' => $this->formatDuration($this->duration * 60),
+                ];
+            }
+
+            // Fallback
+            return [
+                'distance_meters' => 5000,
+                'distance_km' => 5.0,
+                'duration_seconds' => 600,
+                'duration_minutes' => 10.0,
+                'duration_text' => '10 mins',
+            ];
         });
     }
 
     /**
      * Get trip route information (origin → destination)
-     * Used for: arrived, in_progress phases
      */
     protected function getTripRouteInfo($routeService)
     {
@@ -237,53 +295,18 @@ class RideResource extends JsonResource
             ];
         }
 
-        // Calculate route: origin → destination
-        $cacheKey = "trip_route_{$this->origin_lat}_{$this->origin_lng}_{$this->destination_lat}_{$this->destination_lng}";
-        
-        return Cache::remember($cacheKey, 3600, function () use ($routeService) {
-            try {
-                $tripRoute = $routeService->getRouteInfo(
-                    $this->origin_lat,
-                    $this->origin_lng,
-                    $this->destination_lat,
-                    $this->destination_lng
-                );
+        $phase = $this->status === 'arrived' ? 'at_pickup' : 
+                 ($this->status === 'in_progress' ? 'in_trip' : 'pending');
+        $description = $this->status === 'arrived' ? 'Driver arrived at pickup' : 
+                       ($this->status === 'in_progress' ? 'Trip in progress' : 'Calculating route');
 
-                if ($tripRoute) {
-                    $phase = $this->status === 'arrived' ? 'at_pickup' : 'in_trip';
-                    $description = $this->status === 'arrived' 
-                        ? 'Driver arrived at pickup' 
-                        : 'Trip in progress';
+        $tripRoute = $this->calculateTripRoute($routeService);
 
-                    return [
-                        'phase' => $phase,
-                        'description' => $description,
-                        'trip_route' => [
-                            'distance_meters' => $tripRoute['distance'],
-                            'distance_km' => round($tripRoute['distance'] / 1000, 2),
-                            'duration_seconds' => $tripRoute['duration'],
-                            'duration_minutes' => round($tripRoute['duration'] / 60, 1),
-                            'duration_text' => $this->formatDuration($tripRoute['duration']),
-                        ],
-                    ];
-                }
-            } catch (\Exception $e) {
-                \Log::error('Trip route error: ' . $e->getMessage());
-            }
-
-            // Fallback values
-            return [
-                'phase' => 'pending',
-                'description' => 'Calculating route',
-                'trip_route' => [
-                    'distance_meters' => 5000,
-                    'distance_km' => 5.0,
-                    'duration_seconds' => 600,
-                    'duration_minutes' => 10.0,
-                    'duration_text' => '10 mins',
-                ],
-            ];
-        });
+        return [
+            'phase' => $phase,
+            'description' => $description,
+            'trip_route' => $tripRoute,
+        ];
     }
 
     /**
@@ -334,6 +357,7 @@ class RideResource extends JsonResource
             try {
                 return $geocodingService->getAddress($lat, $lng) ?? 'Address unavailable';
             } catch (\Exception $e) {
+                \Log::error('Geocoding error: ' . $e->getMessage());
                 return 'Address unavailable';
             }
         });
@@ -341,11 +365,9 @@ class RideResource extends JsonResource
 
     /**
      * Get current location info (for tracking during ride)
-     * Gets location from driver relationship
      */
     protected function getCurrentLocationInfo()
     {
-        // Check if ride is active AND driver exists AND has current location
         if (in_array($this->status, ['accepted', 'in_progress', 'arrived']) && 
             $this->driver && 
             $this->driver->current_driver_lat && 
@@ -393,7 +415,6 @@ class RideResource extends JsonResource
         $user = request()->user();
         if (!$user) return false;
 
-        // Show phone during active rides
         if (in_array($this->status, ['accepted', 'in_progress', 'arrived'])) {
             $isPassenger = $this->passenger_id === $user->id;
             $isDriver = $user->driver && $this->driver_id === $user->driver->id;
@@ -411,7 +432,6 @@ class RideResource extends JsonResource
         $user = request()->user();
         if (!$user) return false;
 
-        // Only admins can see emails
         return $user->role === 'admin';
     }
 }
