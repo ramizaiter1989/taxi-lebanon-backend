@@ -701,4 +701,57 @@ public function updateProfile(Request $request, Driver $driver)
             }
         });
     }
+    public function streamLocation(Request $request)
+{
+    $user = $request->user();
+    $driver = $user->driver;
+
+    if (!$driver) {
+        return response()->json(['error' => 'Not a driver'], 403);
+    }
+
+    $lat = $request->input('lat');
+    $lng = $request->input('lng');
+
+    // Just broadcast — no DB write
+    broadcast(new DriverLocationUpdated(
+        $driver->id,
+        $user->name,
+        $lat,
+        $lng
+    ));
+
+    return response()->json(['status' => 'streamed']);
+}
+
+public function saveLocation(Request $request)
+{
+    $user = $request->user();
+    $driver = $user->driver;
+
+    if (!$driver) {
+        return response()->json(['error' => 'Not a driver'], 403);
+    }
+
+    $lat = $request->input('lat');
+    $lng = $request->input('lng');
+
+    // Save to DB
+    $driver->update([
+        'current_lat' => $lat,
+        'current_lng' => $lng,
+        'last_location_update' => now(),
+    ]);
+
+    // Also broadcast (optional)
+    broadcast(new DriverLocationUpdated(
+        $driver->id,
+        $user->name,
+        $lat,
+        $lng
+    ));
+
+    return response()->json(['status' => 'saved']);
+}
+
 }

@@ -85,6 +85,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Driver Routes
     Route::prefix('driver')->group(function () {
         Route::post('license', [AuthController::class, 'completeDriverProfile']);
+        Route::post('/location/stream',[DriverController::class,'streamLocation']);//live real time every 5 S
+        Route::post('/location/save',[DriverController::class,'saveLocation']);// save every 60 S
         Route::get('profile', [DriverController::class, 'showProfile']);
         Route::put('profile', [DriverController::class, 'updateProfile']);
         Route::post('go-online', [DriverController::class, 'goOnline']);
