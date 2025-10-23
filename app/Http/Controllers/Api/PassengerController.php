@@ -12,44 +12,34 @@ use App\Models\FavoritePlace;
 use App\Models\EmergencyContact;
 use App\Notifications\RideNotification;
 use Illuminate\Support\Facades\Log;
+use App\Services\LocationService;
 
 class PassengerController extends Controller
 {
     /**
      * Update passenger location
      */
-public function updateLocation(Request $request)
+public function updateLocation(Request $request, LocationService $locationService)
 {
     $request->validate([
         'lat' => 'required|numeric|between:-90,90',
         'lng' => 'required|numeric|between:-180,180',
     ]);
 
-    $user = $request->user();
+    $result = $locationService->handleLocation($request->user(), $request->lat, $request->lng, true);
 
-    if ($user->role !== 'passenger') {
-        return response()->json(['error' => 'Only passengers can update location'], 403);
+    if (isset($result['error'])) {
+        return response()->json(['error' => $result['error']], $result['status']);
     }
 
-    $user->update([
-        'current_lat' => $request->lat,
-        'current_lng' => $request->lng,
-        'last_location_update' => now(),
-    ]);
-
-    if ($user->status) {
-        broadcast(new PassengerLocationUpdated($user))->toOthers();
-    }
-
-    // Return active ride info if exists
-    $activeRide = Ride::where('passenger_id', $user->id)
+    $activeRide = Ride::where('passenger_id', $request->user()->id)
         ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
         ->with('driver.user')
         ->first();
 
     return response()->json([
         'message' => 'Location updated',
-        'has_active_ride' => $activeRide ? true : false,
+        'has_active_ride' => (bool)$activeRide,
         'ride_status' => $activeRide?->status,
         'driver' => $activeRide ? [
             'name' => $activeRide->driver->user->name,
@@ -59,43 +49,30 @@ public function updateLocation(Request $request)
         ] : null,
     ]);
 }
-
-
-    /**
+   /**
  * Stream passenger location in real-time (called every few seconds from frontend)
  */
-public function streamLocation(Request $request)
+public function streamLocation(Request $request, LocationService $locationService)
 {
     $request->validate([
         'lat' => 'required|numeric|between:-90,90',
         'lng' => 'required|numeric|between:-180,180',
     ]);
 
-    $user = $request->user();
-    
-    if ($user->role !== 'passenger') {
-        return response()->json(['error' => 'Only passengers can stream location'], 403);
+    $result = $locationService->handleLocation($request->user(), $request->lat, $request->lng, false);
+
+    if (isset($result['error'])) {
+        return response()->json(['error' => $result['error']], $result['status']);
     }
 
-    $user->update([
-        'current_lat' => $request->lat,
-        'current_lng' => $request->lng,
-        'last_location_update' => now(),
-    ]);
-
-    if ($user->status) {
-        broadcast(new PassengerLocationUpdated($user))->toOthers();
-    }
-
-    // Get active ride if exists
-    $activeRide = Ride::where('passenger_id', $user->id)
+    $activeRide = Ride::where('passenger_id', $request->user()->id)
         ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
         ->with('driver.user')
         ->first();
 
     return response()->json([
         'message' => 'Location streamed',
-        'has_active_ride' => $activeRide ? true : false,
+        'has_active_ride' => (bool)$activeRide,
         'ride_status' => $activeRide?->status,
         'driver' => $activeRide ? [
             'name' => $activeRide->driver->user->name,
@@ -105,6 +82,11 @@ public function streamLocation(Request $request)
         ] : null,
     ]);
 }
+
+
+
+ 
+
 
     /**
      * Get all rides for authenticated passenger
@@ -202,10 +184,6 @@ public function updateProfile(Request $request, ?User $passenger = null)
         ],
     ]);
 }
-
-
-
-
     /**
      * Admin fetches all online passengers
      */

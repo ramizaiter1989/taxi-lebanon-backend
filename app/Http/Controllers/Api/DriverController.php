@@ -14,6 +14,7 @@ use App\Models\Ride;
 use Illuminate\Support\Facades\Log;
 use App\Traits\PolylineTrait;
 use App\Models\DriverBlockedPassenger;
+use App\Services\LocationService;
 class DriverController extends Controller
 {
     use PolylineTrait;
@@ -470,59 +471,53 @@ public function updateProfile(Request $request, Driver $driver)
      * @param Driver $driver
      * @return \Illuminate\Http\JsonResponse
      */
-    public function updateLocation(Request $request, Driver $driver)
+
+
+public function updateLocation(Request $request, Driver $driver, LocationService $locationService)
 {
-    try {
-        // Check authorization
-        if ($request->user()->id !== $driver->user_id) {
-            return response()->json(['error' => 'Unauthorized'], 403);
-        }
+    $request->validate([
+        'lat' => 'required|numeric|between:-90,90',
+        'lng' => 'required|numeric|between:-180,180',
+    ]);
 
-        // Validate the request (use current_driver_lat/lng)
-        $validated = $request->validate([
-                'current_driver_lat' => 'required|numeric|between:-90,90',
-                'current_driver_lng' => 'required|numeric|between:-180,180',
-            ]);
-
-            $driver->update([
-                'current_driver_lat' => $validated['current_driver_lat'],
-                'current_driver_lng' => $validated['current_driver_lng'],
-            ]);
-
-
-        // Broadcast location update
-        broadcast(new DriverLocationUpdated(
-            $driver->id,
-            $driver->user->name,
-            $validated['current_driver_lat'],
-            $validated['current_driver_lng']
-        ))->toOthers();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Location updated successfully',
-            'data' => [
-                'driver_id' => $driver->id,
-                'lat' => $driver->current_driver_lat,
-                'lng' => $driver->current_driver_lng,
-                'updated_at' => $driver->updated_at,
-            ]
-        ]);
-    } catch (\Illuminate\Validation\ValidationException $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Validation failed',
-            'errors' => $e->errors()
-        ], 422);
-    } catch (\Exception $e) {
-        Log::error('Error updating driver location: ' . $e->getMessage());
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to update location',
-            'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
-        ], 500);
+    $user = $request->user();
+    if ($user->id !== $driver->user_id) {
+        return response()->json(['error' => 'Unauthorized'], 403);
     }
+
+    $result = $locationService->handleLocation($user, $request->lat, $request->lng, true);
+
+    if (isset($result['error'])) {
+        return response()->json(['error' => $result['error']], $result['status']);
+    }
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Location updated successfully',
+        'data' => $result
+    ]);
 }
+
+public function streamLocation(Request $request, LocationService $locationService)
+{
+    $request->validate([
+        'lat' => 'required|numeric|between:-90,90',
+        'lng' => 'required|numeric|between:-180,180',
+    ]);
+
+    $result = $locationService->handleLocation($request->user(), $request->lat, $request->lng, false);
+
+    if (isset($result['error'])) {
+        return response()->json(['error' => $result['error']], $result['status']);
+    }
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Location streamed',
+        'data' => $result
+    ]);
+}
+
 
 
 
@@ -701,28 +696,6 @@ public function updateProfile(Request $request, Driver $driver)
             }
         });
     }
-    public function streamLocation(Request $request)
-{
-    $user = $request->user();
-    $driver = $user->driver;
-
-    if (!$driver) {
-        return response()->json(['error' => 'Not a driver'], 403);
-    }
-
-    $lat = $request->input('lat');
-    $lng = $request->input('lng');
-
-    // Just broadcast — no DB write
-    broadcast(new DriverLocationUpdated(
-        $driver->id,
-        $user->name,
-        $lat,
-        $lng
-    ));
-
-    return response()->json(['status' => 'streamed']);
-}
 
 public function saveLocation(Request $request)
 {

@@ -166,21 +166,33 @@ public function completeDriverProfile(Request $request)
         'license_number' => 'required|string|max:50',
         'vehicle_type' => 'required|string|max:50',
         'vehicle_number' => 'required|string|max:50',
+
+        // All possible photo fields
         'car_photo' => 'nullable|image|max:2048',
+        'car_photo_front' => 'nullable|image|max:2048',
+        'car_photo_back' => 'nullable|image|max:2048',
+        'car_photo_left' => 'nullable|image|max:2048',
+        'car_photo_right' => 'nullable|image|max:2048',
         'license_photo' => 'nullable|image|max:2048',
         'id_photo' => 'nullable|image|max:2048',
         'insurance_photo' => 'nullable|image|max:2048',
     ]);
 
-    $driver = $user->driver;
+    $driver = $user->driver ?? Driver::create(['user_id' => $user->id]);
 
-    if (!$driver) {
-        // Fallback in case auto-creation failed
-        $driver = Driver::create(['user_id' => $user->id]);
-    }
+    // ✅ Handle all uploads in one loop
+    $photoFields = [
+        'car_photo',
+        'car_photo_front',
+        'car_photo_back',
+        'car_photo_left',
+        'car_photo_right',
+        'license_photo',
+        'id_photo',
+        'insurance_photo',
+    ];
 
-    // Handle file uploads
-    foreach (['car_photo', 'license_photo', 'id_photo', 'insurance_photo'] as $photoField) {
+    foreach ($photoFields as $photoField) {
         if ($request->hasFile($photoField)) {
             $path = $request->file($photoField)->store('drivers', 'public');
             $validated[$photoField] = $path;
@@ -195,6 +207,7 @@ public function completeDriverProfile(Request $request)
         'driver' => $driver,
     ]);
 }
+
 
     /**
      * Get user notifications
