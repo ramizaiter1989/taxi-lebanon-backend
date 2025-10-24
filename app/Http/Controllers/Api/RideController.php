@@ -578,87 +578,89 @@ public function current(Request $request)
 
     // POST /api/rides/{ride}/cancel - Passenger or driver cancels a ride
     public function cancelRide(Request $request, Ride $ride)
-    {
-        $user = $request->user();
-        $isPassenger = $ride->passenger_id === $user->id;
-        $isDriver = $user->driver && $ride->driver_id === $user->driver->id;
+{
+    $user = $request->user();
+    $isPassenger = $ride->passenger_id === $user->id;
+    $isDriver = $user->driver && $ride->driver_id === $user->driver->id;
 
-        if (!$isPassenger && !$isDriver) {
-            return response()->json(['error' => 'Unauthorized to cancel this ride'], 403);
-        }
+    if (!$isPassenger && !$isDriver) {
+        return response()->json(['error' => 'Unauthorized to cancel this ride'], 403);
+    }
 
-        // Cannot cancel completed rides
-        if (in_array($ride->status, ['completed', 'cancelled'])) {
-            return response()->json(['error' => 'Cannot cancel a ' . $ride->status . ' ride'], 400);
-        }
+    // Cannot cancel completed or already cancelled rides
+    if (in_array($ride->status, ['completed', 'cancelled'])) {
+        return response()->json(['error' => 'Cannot cancel a ' . $ride->status . ' ride'], 400);
+    }
 
-        $data = $request->validate([
-            'reason' => 'required|string|in:driver_no_show,wrong_location,changed_mind,too_expensive,emergency,other',
-            'note' => 'nullable|string|max:200'
+    $data = $request->validate([
+        'reason' => 'required|string|in:driver_no_show,wrong_location,changed_mind,too_expensive,emergency,other',
+        'note' => 'nullable|string|max:200',
+    ]);
+
+    DB::beginTransaction();
+    try {
+        // Update ride status
+        $ride->update([
+            'status' => 'cancelled',
+            'cancellation_reason' => $data['reason'],
+            'cancellation_note' => $data['note'],
+            'cancelled_by' => $user->id,
+            'cancelled_at' => now(),
         ]);
 
-        DB::beginTransaction();
-        try {
-            $ride->update([
-                'status' => 'cancelled',
-                'cancellation_reason' => $data['reason'],
-                'cancellation_note' => $data['note'],
-                'cancelled_by' => $user->id,
-                'cancelled_at' => now(),
-            ]);
-
-            // If driver cancels, make them available again
-            if ($isDriver && $ride->driver) {
-                $ride->driver->availability_status = true;
-                $ride->driver->save();
-            }
-
-            // Notify the other party
-            if ($isPassenger && $ride->driver) {
-                $ride->driver->user->notify(new RideNotification(
-                    'Ride Cancelled',
-                    'The passenger has cancelled the ride.',
-                    [
-                        'type' => 'ride_cancelled',
-                        'ride_id' => $ride->id,
-                        'cancelled_by' => 'passenger',
-                        'reason' => $data['reason'],
-                    ]
-                ));
-            } elseif ($isDriver) {
-                $ride->passenger->notify(new RideNotification(
-                    'Ride Cancelled',
-                    'The driver has cancelled the ride.',
-                    [
-                        'type' => 'ride_cancelled',
-                        'ride_id' => $ride->id,
-                        'cancelled_by' => 'driver',
-                        'reason' => $data['reason'],
-                    ]
-                ));
-            }
-
-            // Broadcast cancellation
-            if (class_exists(RideCancelled::class)) {
-                broadcast(new RideCancelled($ride, $user))->toOthers();
-            }
-
-            DB::commit();
-
-            return response()->json([
-                'message' => 'Ride cancelled successfully',
-                'ride' => new RideResource($ride->load(['driver.user', 'passenger'])),
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Error cancelling ride', [
-                'ride_id' => $ride->id,
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-            ]);
-            return response()->json(['error' => 'Failed to cancel ride. Please try again.'], 500);
+        // Make driver available again (if any)
+        if ($isDriver && $ride->driver) {
+            $ride->driver->availability_status = true;
+            $ride->driver->save();
         }
+
+        // Notify other party (if they exist)
+        if ($isPassenger && $ride->driver && $ride->driver->user) {
+            $ride->driver->user->notify(new RideNotification(
+                'Ride Cancelled',
+                'The passenger has cancelled the ride.',
+                [
+                    'type' => 'ride_cancelled',
+                    'ride_id' => $ride->id,
+                    'cancelled_by' => 'passenger',
+                    'reason' => $data['reason'],
+                ]
+            ));
+        } elseif ($isDriver && $ride->passenger) {
+            $ride->passenger->notify(new RideNotification(
+                'Ride Cancelled',
+                'The driver has cancelled the ride.',
+                [
+                    'type' => 'ride_cancelled',
+                    'ride_id' => $ride->id,
+                    'cancelled_by' => 'driver',
+                    'reason' => $data['reason'],
+                ]
+            ));
+        }
+
+        // Broadcast event safely
+        if (class_exists(RideCancelled::class)) {
+            broadcast(new RideCancelled($ride, $user))->toOthers();
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'message' => 'Ride cancelled successfully',
+            'ride' => new RideResource($ride->load(['driver.user', 'passenger'])),
+        ]);
+    } catch (\Exception $e) {
+        DB::rollBack();
+        Log::error('Error cancelling ride', [
+            'ride_id' => $ride->id,
+            'user_id' => $user->id,
+            'error' => $e->getMessage(),
+        ]);
+        return response()->json(['error' => 'Failed to cancel ride. Please try again.'], 500);
     }
+}
+
 
     // PATCH /api/rides/{ride}/location - Update driver location during a ride
     public function updateLocation(Request $request, Ride $ride)
