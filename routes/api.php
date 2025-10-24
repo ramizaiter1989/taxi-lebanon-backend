@@ -135,6 +135,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('{ride}/accept', [RideController::class, 'acceptRide']);
         Route::post('{ride}/update-location', [RideController::class, 'updateLocation']);
         Route::post('{ride}/arrived', [RideController::class, 'markArrived']);
+        Route::post('{ride}/complete', [RideController::class, 'completeRide']);
         Route::post('{ride}/cancel', [RideController::class, 'cancelRide']);
         Route::post('estimate-fare', [RideController::class, 'estimateFare']);
         Route::patch('{ride}/status', [RideController::class, 'updateStatus']);
