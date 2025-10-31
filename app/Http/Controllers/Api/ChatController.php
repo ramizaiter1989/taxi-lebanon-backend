@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ChatResource;
 use App\Events\NewMessageEvent;
+use App\Events\MessageReadEvent;
 
 class ChatController extends Controller
 {
@@ -85,27 +86,34 @@ class ChatController extends Controller
         return ChatResource::collection($chats);
     }
 
-    public function markAsRead(Request $request, Ride $ride)
-    {
-        $user = $request->user();
+public function markAsRead(Request $request, Ride $ride)
+{
+    $user = $request->user();
 
-        // Only mark messages where the current user is the receiver
-        $updatedCount = Chat::where('ride_id', $ride->id)
-            ->where('receiver_id', $user->id)
-            ->where('is_read', false)
-            ->update(['is_read' => true]);
+    // Fetch the unread messages first
+    $messages = Chat::where('ride_id', $ride->id)
+        ->where('receiver_id', $user->id)
+        ->where('is_read', false)
+        ->get();
 
-        \Log::info('Messages marked as read', [
-            'user_id' => $user->id,
-            'ride_id' => $ride->id,
-            'count' => $updatedCount
-        ]);
-
-        return response()->json([
-            'message' => 'Messages marked as read',
-            'updated_count' => $updatedCount
-        ]);
+    // Update and broadcast for each message
+    foreach ($messages as $message) {
+        $message->update(['is_read' => true]);
+        broadcast(new MessageReadEvent($message->id, $ride->id))->toOthers();
     }
+
+    \Log::info('Messages marked as read', [
+        'user_id' => $user->id,
+        'ride_id' => $ride->id,
+        'count' => $messages->count()
+    ]);
+
+    return response()->json([
+        'message' => 'Messages marked as read',
+        'updated_count' => $messages->count()
+    ]);
+}
+
 
     // Optional: Get unread message count for a ride
     public function unreadCount(Request $request, Ride $ride)
