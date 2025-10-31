@@ -89,27 +89,30 @@ class ChatController extends Controller
 public function markAsRead(Request $request, Ride $ride)
 {
     $user = $request->user();
-    $updatedCount = Chat::where('ride_id', $ride->id)
-        ->where('receiver_id', $user->id) // Only mark messages sent TO the current user
-        ->where('is_read', false)
-        ->update(['is_read' => true]);
 
-    // Broadcast read events for each updated message
+    // Fetch the unread messages first
     $messages = Chat::where('ride_id', $ride->id)
         ->where('receiver_id', $user->id)
         ->where('is_read', false)
         ->get();
 
+    // Update and broadcast for each message
     foreach ($messages as $message) {
+        $message->update(['is_read' => true]);
         broadcast(new MessageReadEvent($message->id, $ride->id))->toOthers();
     }
 
+    \Log::info('Messages marked as read', [
+        'user_id' => $user->id,
+        'ride_id' => $ride->id,
+        'count' => $messages->count()
+    ]);
+
     return response()->json([
         'message' => 'Messages marked as read',
-        'updated_count' => $updatedCount
+        'updated_count' => $messages->count()
     ]);
 }
-
 
 
     // Optional: Get unread message count for a ride
