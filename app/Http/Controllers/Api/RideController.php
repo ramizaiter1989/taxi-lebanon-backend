@@ -597,7 +597,7 @@ class RideController extends Controller
             if ($isPassenger && $ride->driver && $ride->driver->user) {
                 $ride->driver->user->notify(new RideNotification(
                     'Ride Cancelled',
-                    'The passenger has cancelled the ride.',
+                    'The passenger has cancelled the ride. Do not worry',
                     [
                         'type' => 'ride_cancelled',
                         'ride_id' => $ride->id,
