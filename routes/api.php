@@ -152,6 +152,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
     // expo service
     Route::post('/update-push-token', [AuthController::class, 'updatePushToken']);
+
 Route::get('/test-push', function() {
     $service = app(\App\Services\ExpoPushNotificationService::class);
     $result = $service->sendPushNotification(
@@ -161,5 +162,33 @@ Route::get('/test-push', function() {
         ['test' => true]
     );
     return response()->json(['sent' => $result]);
+})->middleware('auth:sanctum');
+
+Route::get('/test-notification/{userId}', function($userId) {
+    $user = \App\Models\User::find($userId);
+    
+    if (!$user || !$user->expo_push_token) {
+        return response()->json([
+            'error' => 'User not found or no push token',
+            'user_id' => $userId,
+            'has_user' => !!$user,
+            'has_token' => $user ? !!$user->expo_push_token : false,
+            'token' => $user->expo_push_token ?? null
+        ]);
+    }
+    
+    $service = app(\App\Services\ExpoPushNotificationService::class);
+    $result = $service->sendPushNotification(
+        [$user->expo_push_token],
+        'Test Notification 🧪',
+        'This is a test from Laravel backend',
+        ['test' => true, 'timestamp' => now()->toString()]
+    );
+    
+    return response()->json([
+        'sent' => $result,
+        'user_id' => $user->id,
+        'token' => substr($user->expo_push_token, 0, 30) . '...'
+    ]);
 })->middleware('auth:sanctum');
 });
