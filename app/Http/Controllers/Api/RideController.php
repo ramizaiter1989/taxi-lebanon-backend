@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
@@ -18,6 +17,7 @@ use Illuminate\Support\Facades\Cache;
 use App\Http\Resources\RideResource;
 use App\Services\GeocodingService;
 use App\Services\RouteService;
+use App\Services\ExpoPushNotificationService;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -37,16 +37,13 @@ class RideController extends Controller
     public function store(Request $request)
     {
         $passenger = $request->user();
-
         // Prevent multiple active rides
         $activeRide = Ride::where('passenger_id', $passenger->id)
             ->whereIn('status', ['pending', 'accepted', 'in_progress', 'arrived'])
             ->first();
-
         if ($activeRide) {
             return response()->json(['error' => 'You already have an active ride.'], 403);
         }
-
         // Validate request
         $data = $request->validate([
             'origin_lat' => 'required|numeric|between:-90,90',
@@ -58,7 +55,6 @@ class RideController extends Controller
             'fare' => 'nullable|numeric|min:0',
             'is_pool' => 'sometimes|boolean',
         ]);
-
         // Compute distance/duration if not provided
         if (empty($data['distance']) || empty($data['duration'])) {
             try {
@@ -69,9 +65,7 @@ class RideController extends Controller
                     $data['destination_lat'],
                     $data['destination_lng']
                 );
-
                 Log::info('RouteService response:', ['trip' => $trip]);
-
                 if ($trip && isset($trip['distance'], $trip['duration'])) {
                     $data['distance'] = $trip['distance'] / 1000.0;
                     $data['duration'] = $trip['duration'] / 60.0;
@@ -87,7 +81,6 @@ class RideController extends Controller
                 return response()->json(['error' => 'Unable to calculate route. Please try again.'], 500);
             }
         }
-
         // Create ride
         $ride = Ride::create(array_merge([
             'passenger_id' => $passenger->id,
@@ -102,7 +95,6 @@ class RideController extends Controller
             'fare' => $data['fare'] ?? null,
             'is_pool' => $data['is_pool'] ?? false,
         ])));
-
         // Server-side fare validation and calculation
         if (!empty($ride->distance) && !empty($ride->duration)) {
             $expectedFare = $ride->calculateFare(false);
@@ -111,7 +103,6 @@ class RideController extends Controller
                     $frontendFare = (float)$request->input('fare');
                     $tolerancePercent = config('rides.fare_tolerance_percent', 2);
                     $allowedDiff = max(0.01, ($tolerancePercent / 100) * max($expectedFare, $frontendFare));
-
                     if (abs($frontendFare - $expectedFare) > $allowedDiff) {
                         Log::warning('Fare mismatch on ride create', [
                             'user_id' => $passenger->id,
@@ -129,9 +120,7 @@ class RideController extends Controller
                 $ride->save();
             }
         }
-
         event(new RideRequested($ride));
-
         return response()->json([
             'message' => 'Ride requested successfully',
             'ride' => new RideResource($ride->load(['passenger'])),
@@ -145,13 +134,10 @@ class RideController extends Controller
         $perPage = min((int)$request->query('per_page', 15), 100);
         $statusFilter = $request->query('status');
         $liveStatuses = ['pending', 'accepted', 'in_progress', 'arrived'];
-
         $query = $this->buildRideQuery($user, $liveStatuses);
-
         if ($statusFilter && in_array($statusFilter, $liveStatuses)) {
             $query->where('status', $statusFilter);
         }
-
         $rides = $query->orderBy('created_at', 'desc')->paginate($perPage);
         return RideResource::collection($rides);
     }
@@ -165,21 +151,16 @@ class RideController extends Controller
         $from = $request->query('from');
         $to = $request->query('to');
         $historyStatuses = ['completed', 'cancelled'];
-
         $query = $this->buildRideQuery($user, $historyStatuses);
-
         if ($statusFilter && in_array($statusFilter, $historyStatuses)) {
             $query->where('status', $statusFilter);
         }
-
         if ($from) {
             $query->where('created_at', '>=', $from);
         }
-
         if ($to) {
             $query->where('created_at', '<=', $to);
         }
-
         $rides = $query->orderBy('created_at', 'desc')->paginate($perPage);
         return RideResource::collection($rides);
     }
@@ -191,97 +172,73 @@ class RideController extends Controller
         $isPassenger = $ride->passenger_id === $user->id;
         $isDriver = $user->driver && $ride->driver_id === $user->driver->id;
         $isAdmin = $user->role === 'admin';
-
         if (!($isPassenger || $isDriver || $isAdmin)) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
-
         $ride->load(['passenger', 'driver.user']);
         return new RideResource($ride);
     }
 
     // GET /api/rides/live - Current active ride for passenger
-public function current(Request $request)
-{
-    try {
-        $user = $request->user();
-
-        // Define allowed statuses based on role
-        $allowedStatuses = match ($user->role) {
-            'driver' => ['accepted', 'in_progress', 'arrived'],
-            'passenger' => ['pending', 'accepted', 'in_progress', 'arrived'],
-            default => [],
-        };
-
-        // If somehow not driver or passenger, just return null
-        if (empty($allowedStatuses)) {
-            return response()->json(['ride' => null]);
-        }
-
-        // Base query
-        $query = Ride::query()
-            ->whereIn('status', $allowedStatuses)
-            ->with(['driver.user', 'passenger']);
-
-        // Role-based filtering
-        if ($user->role === 'driver') {
-            $driver = $user->driver;
-            if (!$driver) {
-                return response()->json(['ride' => null], 404);
+    public function current(Request $request)
+    {
+        try {
+            $user = $request->user();
+            $allowedStatuses = match ($user->role) {
+                'driver' => ['accepted', 'in_progress', 'arrived'],
+                'passenger' => ['pending', 'accepted', 'in_progress', 'arrived'],
+                default => [],
+            };
+            if (empty($allowedStatuses)) {
+                return response()->json(['ride' => null]);
             }
-            $query->where('driver_id', $driver->id);
-        } else {
-            $query->where('passenger_id', $user->id);
+            $query = Ride::query()
+                ->whereIn('status', $allowedStatuses)
+                ->with(['driver.user', 'passenger']);
+            if ($user->role === 'driver') {
+                $driver = $user->driver;
+                if (!$driver) {
+                    return response()->json(['ride' => null], 404);
+                }
+                $query->where('driver_id', $driver->id);
+            } else {
+                $query->where('passenger_id', $user->id);
+            }
+            $ride = $query->latest()->first();
+            if (!$ride) {
+                return response()->json(['ride' => null]);
+            }
+            return new RideResource($ride);
+        } catch (\Exception $e) {
+            \Log::error('Ride current error: ' . $e->getMessage());
+            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            return response()->json([
+                'error' => 'Failed to fetch current ride',
+                'message' => config('app.debug') ? $e->getMessage() : 'Internal server error',
+            ], 500);
         }
-
-        $ride = $query->latest()->first();
-
-        if (!$ride) {
-            return response()->json(['ride' => null]);
-        }
-
-        return new RideResource($ride);
-
-    } catch (\Exception $e) {
-        \Log::error('Ride current error: ' . $e->getMessage());
-        \Log::error('Stack trace: ' . $e->getTraceAsString());
-
-        return response()->json([
-            'error' => 'Failed to fetch current ride',
-            'message' => config('app.debug') ? $e->getMessage() : 'Internal server error',
-        ], 500);
     }
-}
-
 
     // GET /api/rides/available - Available rides for driver
     public function availableRides(Request $request, GeocodingService $geocodingService)
     {
         $driver = $request->user()->driver;
-
         if (!$driver) {
             return response()->json(['error' => 'Only drivers can view available rides'], 403);
         }
-
         if ($driver->availability_status !== true) {
             return response()->json(['error' => 'Driver must be available to view rides'], 400);
         }
-
         if ($driver->current_driver_lat === null || $driver->current_driver_lng === null) {
             return response()->json(['error' => 'Driver location not set'], 400);
         }
-
-        // Check if driver already has an active ride
         $activeRide = Ride::where('driver_id', $driver->id)
             ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
             ->exists();
-
         if ($activeRide) {
             return response()->json(['error' => 'You already have an active ride'], 400);
         }
-
         $scanningRange = $driver->scanning_range_km ?? config('rides.default_scanning_range', 10);
-
         $rides = Ride::where('status', 'pending')
             ->whereNull('driver_id')
             ->select('*')
@@ -302,14 +259,11 @@ public function current(Request $request)
             ->with('passenger')
             ->limit(20)
             ->get();
-
-        // Batch geocoding to reduce API calls
         $coordinates = [];
         foreach ($rides as $ride) {
             $coordinates[] = [$ride->origin_lat, $ride->origin_lng];
             $coordinates[] = [$ride->destination_lat, $ride->destination_lng];
         }
-
         $addresses = Cache::remember(
             'geocode_' . md5(serialize($coordinates)),
             now()->addHours(6),
@@ -317,18 +271,15 @@ public function current(Request $request)
                 return $geocodingService->batchGetAddresses($coordinates);
             }
         );
-
         $ridesWithAddresses = $rides->map(function ($ride, $index) use ($addresses) {
             $originIndex = $index * 2;
             $destIndex = $originIndex + 1;
-
             return array_merge($ride->toArray(), [
                 'origin_address' => $addresses[$originIndex] ?? 'Address unavailable',
                 'destination_address' => $addresses[$destIndex] ?? 'Address unavailable',
                 'distance_to_pickup_km' => round($ride->distance_to_pickup, 2),
             ]);
         });
-
         return response()->json($ridesWithAddresses);
     }
 
@@ -336,38 +287,28 @@ public function current(Request $request)
     public function acceptRide(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
-
         if (!$driver) {
             return response()->json(['error' => 'Only drivers can accept rides'], 403);
         }
-
-        // Check if ride is still available
         DB::beginTransaction();
         try {
             $ride = Ride::where('id', $ride->id)
                 ->where('status', 'pending')
                 ->lockForUpdate()
                 ->first();
-
             if (!$ride) {
                 return response()->json(['error' => 'Ride is no longer available'], 409);
             }
-
             if ($ride->driver_id && $ride->driver_id !== $driver->id) {
                 return response()->json(['error' => 'Ride already assigned to another driver'], 409);
             }
-
-            // Check if driver already has an active ride
             $activeRide = Ride::where('driver_id', $driver->id)
                 ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
                 ->where('id', '!=', $ride->id)
                 ->exists();
-
             if ($activeRide) {
                 return response()->json(['error' => 'You already have an active ride'], 400);
             }
-
-            // Verify driver is within acceptable range
             if ($driver->current_driver_lat && $driver->current_driver_lng) {
                 $distance = $this->calculateDistance(
                     $driver->current_driver_lat,
@@ -375,28 +316,38 @@ public function current(Request $request)
                     $ride->origin_lat,
                     $ride->origin_lng
                 );
-
                 $maxAcceptanceRange = config('rides.max_acceptance_range_km', 15);
                 if ($distance > $maxAcceptanceRange) {
                     return response()->json(['error' => 'You are too far from the pickup location'], 400);
                 }
             }
-
-            // Update ride status to accepted
             $ride->driver_id = $driver->id;
             $ride->status = 'accepted';
             $ride->accepted_at = now();
             $ride->save();
-
-            // Update driver status
             $driver->availability_status = false;
             $driver->save();
-
-            // Calculate ETA
             $estimatedTime = $this->calculateEstimatedTimeToPickup($ride, $driver);
             $distanceToPickup = $this->calculateDistanceToPickup($ride, $driver);
 
-            // Notify passenger
+            // --- Send Expo Push Notification ---
+            $expoPushService = app(ExpoPushNotificationService::class);
+            $passengerPushToken = $ride->passenger->expo_push_token;
+            if ($passengerPushToken) {
+                $expoPushService->sendPushNotification(
+                    [$passengerPushToken],
+                    'Ride Accepted! 🚗',
+                    "{$driver->user->name} is coming to pick you up. ETA: {$estimatedTime} minutes",
+                    [
+                        'type' => 'ride_accepted',
+                        'ride_id' => $ride->id,
+                        'driver_name' => $driver->user->name,
+                        'eta' => $estimatedTime,
+                    ]
+                );
+            }
+            // --- End Expo Push Notification ---
+
             $ride->passenger->notify(new RideNotification(
                 'Ride Accepted',
                 'Your ride has been accepted by a driver.',
@@ -414,12 +365,9 @@ public function current(Request $request)
                     'distance' => $distanceToPickup,
                 ]
             ));
-
             RideAccepted::dispatch($ride->load(['driver.user', 'passenger']), $driver);
             broadcast(new RideRemoved($ride->id))->toOthers();
-
             DB::commit();
-
             return response()->json([
                 'message' => 'Ride accepted successfully',
                 'ride' => new RideResource($ride->load(['driver.user', 'passenger'])),
@@ -443,29 +391,37 @@ public function current(Request $request)
     public function startRide(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
-
         if (!$driver || $ride->driver_id !== $driver->id) {
             return response()->json(['error' => 'Only assigned driver can start the ride'], 403);
         }
-
         $validTransitions = [
             'arrived' => ['in_progress'],
         ];
-
         if (!isset($validTransitions[$ride->status]) || !in_array('in_progress', $validTransitions[$ride->status])) {
             return response()->json(['error' => 'Invalid ride status transition'], 400);
         }
-
         $ride->status = 'in_progress';
         $ride->started_at = now();
         $ride->save();
+
+        // --- Send Expo Push Notification ---
+        $expoPushService = app(ExpoPushNotificationService::class);
+        $passengerPushToken = $ride->passenger->expo_push_token;
+        if ($passengerPushToken) {
+            $expoPushService->sendPushNotification(
+                [$passengerPushToken],
+                'Trip Started 🛣️',
+                'Your ride has begun. Enjoy your journey!',
+                ['type' => 'trip_started', 'ride_id' => $ride->id]
+            );
+        }
+        // --- End Expo Push Notification ---
 
         $ride->passenger->notify(new RideNotification(
             'Ride Started',
             'Your ride has started.',
             ['type' => 'ride_started', 'ride_id' => $ride->id]
         ));
-
         return response()->json([
             'message' => 'Ride started successfully',
             'ride' => new RideResource($ride->load(['driver.user', 'passenger'])),
@@ -476,22 +432,31 @@ public function current(Request $request)
     public function markArrived(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
-
         if (!$driver || $ride->driver_id !== $driver->id) {
             return response()->json(['error' => 'Only assigned driver can mark arrival'], 403);
         }
-
         $validTransitions = [
             'accepted' => ['arrived'],
         ];
-
         if (!isset($validTransitions[$ride->status]) || !in_array('arrived', $validTransitions[$ride->status])) {
             return response()->json(['error' => 'Invalid ride status transition'], 400);
         }
-
         $ride->status = 'arrived';
         $ride->arrived_at = now();
         $ride->save();
+
+        // --- Send Expo Push Notification ---
+        $expoPushService = app(ExpoPushNotificationService::class);
+        $passengerPushToken = $ride->passenger->expo_push_token;
+        if ($passengerPushToken) {
+            $expoPushService->sendPushNotification(
+                [$passengerPushToken],
+                'Driver Arriving 📍',
+                "{$driver->user->name} is almost at your pickup location",
+                ['type' => 'driver_arriving', 'ride_id' => $ride->id]
+            );
+        }
+        // --- End Expo Push Notification ---
 
         $ride->passenger->notify(new RideNotification(
             'Driver Arrived',
@@ -502,7 +467,6 @@ public function current(Request $request)
                 'driver_name' => $driver->user->name,
             ]
         ));
-
         return response()->json([
             'message' => 'Arrival marked successfully',
             'ride' => new RideResource($ride->load(['driver.user', 'passenger'])),
@@ -513,24 +477,18 @@ public function current(Request $request)
     public function completeRide(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
-
         if (!$driver || $ride->driver_id !== $driver->id) {
             return response()->json(['error' => 'Only assigned driver can complete the ride'], 403);
         }
-
         if (!in_array($ride->status, ['in_progress', 'arrived'])) {
             return response()->json(['error' => 'Ride must be in progress to complete'], 400);
         }
-
         DB::beginTransaction();
         try {
             $ride->status = 'completed';
             $ride->completed_at = now();
-
-            // Recalculate final fare
             if (!empty($ride->distance) && !empty($ride->duration)) {
                 $finalFare = $ride->calculateFare(true);
-
                 if ($ride->fare && abs($finalFare - $ride->fare) > ($ride->fare * 0.1)) {
                     Log::warning('Significant fare change at completion', [
                         'ride_id' => $ride->id,
@@ -538,17 +496,29 @@ public function current(Request $request)
                         'final_fare' => $finalFare,
                     ]);
                 }
-
                 $ride->fare = $finalFare;
             }
-
             $ride->save();
-
-            // Update driver status back to available
             $driver->availability_status = true;
             $driver->save();
 
-            // Notify passenger
+            // --- Send Expo Push Notification ---
+            $expoPushService = app(ExpoPushNotificationService::class);
+            $passengerPushToken = $ride->passenger->expo_push_token;
+            if ($passengerPushToken) {
+                $expoPushService->sendPushNotification(
+                    [$passengerPushToken],
+                    'Trip Completed ✅',
+                    "You have arrived safely. Fare: {$ride->fare} LBP",
+                    [
+                        'type' => 'trip_completed',
+                        'ride_id' => $ride->id,
+                        'fare' => $ride->fare,
+                    ]
+                );
+            }
+            // --- End Expo Push Notification ---
+
             $ride->passenger->notify(new RideNotification(
                 'Ride Completed',
                 'Your ride has been completed. Thank you for riding with us!',
@@ -559,9 +529,7 @@ public function current(Request $request)
                     'duration' => $ride->started_at ? now()->diffInMinutes($ride->started_at) : null,
                 ]
             ));
-
             DB::commit();
-
             return response()->json([
                 'message' => 'Ride completed successfully',
                 'ride' => new RideResource($ride->load(['driver.user', 'passenger'])),
@@ -578,124 +546,120 @@ public function current(Request $request)
 
     // POST /api/rides/{ride}/cancel - Passenger or driver cancels a ride
     public function cancelRide(Request $request, Ride $ride)
-{
-    $user = $request->user();
-    $isPassenger = $ride->passenger_id === $user->id;
-    $isDriver = $user->driver && $ride->driver_id === $user->driver->id;
-
-    if (!$isPassenger && !$isDriver) {
-        return response()->json(['error' => 'Unauthorized to cancel this ride'], 403);
-    }
-
-    // Cannot cancel completed or already cancelled rides
-    if (in_array($ride->status, ['completed', 'cancelled'])) {
-        return response()->json(['error' => 'Cannot cancel a ' . $ride->status . ' ride'], 400);
-    }
-
-    $data = $request->validate([
-        'reason' => 'required|string|in:driver_no_show,wrong_location,changed_mind,too_expensive,emergency,other',
-        'note' => 'nullable|string|max:200',
-    ]);
-
-    DB::beginTransaction();
-    try {
-        // Update ride status
-        $ride->update([
-            'status' => 'cancelled',
-            'cancellation_reason' => $data['reason'],
-            'cancellation_note' => $data['note'],
-            'cancelled_by' => $user->id,
-            'cancelled_at' => now(),
-        ]);
-
-        // Make driver available again (if any)
-        if ($isDriver && $ride->driver) {
-            $ride->driver->availability_status = true;
-            $ride->driver->save();
+    {
+        $user = $request->user();
+        $isPassenger = $ride->passenger_id === $user->id;
+        $isDriver = $user->driver && $ride->driver_id === $user->driver->id;
+        if (!$isPassenger && !$isDriver) {
+            return response()->json(['error' => 'Unauthorized to cancel this ride'], 403);
         }
-
-        // Notify other party (if they exist)
-        if ($isPassenger && $ride->driver && $ride->driver->user) {
-            $ride->driver->user->notify(new RideNotification(
-                'Ride Cancelled',
-                'The passenger has cancelled the ride.',
-                [
-                    'type' => 'ride_cancelled',
-                    'ride_id' => $ride->id,
-                    'cancelled_by' => 'passenger',
-                    'reason' => $data['reason'],
-                ]
-            ));
-        } elseif ($isDriver && $ride->passenger) {
-            $ride->passenger->notify(new RideNotification(
-                'Ride Cancelled',
-                'The driver has cancelled the ride.',
-                [
-                    'type' => 'ride_cancelled',
-                    'ride_id' => $ride->id,
-                    'cancelled_by' => 'driver',
-                    'reason' => $data['reason'],
-                ]
-            ));
+        if (in_array($ride->status, ['completed', 'cancelled'])) {
+            return response()->json(['error' => 'Cannot cancel a ' . $ride->status . ' ride'], 400);
         }
+        $data = $request->validate([
+            'reason' => 'required|string|in:driver_no_show,wrong_location,changed_mind,too_expensive,emergency,other',
+            'note' => 'nullable|string|max:200',
+        ]);
+        DB::beginTransaction();
+        try {
+            $ride->update([
+                'status' => 'cancelled',
+                'cancellation_reason' => $data['reason'],
+                'cancellation_note' => $data['note'],
+                'cancelled_by' => $user->id,
+                'cancelled_at' => now(),
+            ]);
+            if ($isDriver && $ride->driver) {
+                $ride->driver->availability_status = true;
+                $ride->driver->save();
+            }
 
-        // Broadcast event safely
-        if (class_exists(RideCancelled::class)) {
-            broadcast(new RideCancelled($ride, $user))->toOthers();
+            // --- Send Expo Push Notification ---
+            $expoPushService = app(ExpoPushNotificationService::class);
+            $pushToken = $isPassenger ? $ride->driver->user->expo_push_token : $ride->passenger->expo_push_token;
+            if ($pushToken) {
+                $title = 'Ride Cancelled ❌';
+                $body = $isPassenger ? 'The passenger has cancelled the ride.' : 'The driver has cancelled the ride.';
+                $expoPushService->sendPushNotification(
+                    [$pushToken],
+                    $title,
+                    $body,
+                    [
+                        'type' => 'ride_cancelled',
+                        'ride_id' => $ride->id,
+                        'cancelled_by' => $isPassenger ? 'passenger' : 'driver',
+                        'reason' => $data['reason'],
+                    ]
+                );
+            }
+            // --- End Expo Push Notification ---
+
+            if ($isPassenger && $ride->driver && $ride->driver->user) {
+                $ride->driver->user->notify(new RideNotification(
+                    'Ride Cancelled',
+                    'The passenger has cancelled the ride.',
+                    [
+                        'type' => 'ride_cancelled',
+                        'ride_id' => $ride->id,
+                        'cancelled_by' => 'passenger',
+                        'reason' => $data['reason'],
+                    ]
+                ));
+            } elseif ($isDriver && $ride->passenger) {
+                $ride->passenger->notify(new RideNotification(
+                    'Ride Cancelled',
+                    'The driver has cancelled the ride.',
+                    [
+                        'type' => 'ride_cancelled',
+                        'ride_id' => $ride->id,
+                        'cancelled_by' => 'driver',
+                        'reason' => $data['reason'],
+                    ]
+                ));
+            }
+            if (class_exists(RideCancelled::class)) {
+                broadcast(new RideCancelled($ride, $user))->toOthers();
+            }
+            DB::commit();
+            return response()->json([
+                'message' => 'Ride cancelled successfully',
+                'ride' => new RideResource($ride->load(['driver.user', 'passenger'])),
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error cancelling ride', [
+                'ride_id' => $ride->id,
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json(['error' => 'Failed to cancel ride. Please try again.'], 500);
         }
-
-        DB::commit();
-
-        return response()->json([
-            'message' => 'Ride cancelled successfully',
-            'ride' => new RideResource($ride->load(['driver.user', 'passenger'])),
-        ]);
-    } catch (\Exception $e) {
-        DB::rollBack();
-        Log::error('Error cancelling ride', [
-            'ride_id' => $ride->id,
-            'user_id' => $user->id,
-            'error' => $e->getMessage(),
-        ]);
-        return response()->json(['error' => 'Failed to cancel ride. Please try again.'], 500);
     }
-}
-
 
     // PATCH /api/rides/{ride}/location - Update driver location during a ride
     public function updateLocation(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
-
         if (!$driver || $ride->driver_id !== $driver->id) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
-
-        // Only allow location updates for active rides
         if (!in_array($ride->status, ['accepted', 'in_progress', 'arrived'])) {
             return response()->json(['error' => 'Cannot update location for this ride status'], 400);
         }
-
         $data = $request->validate([
             'driver_lat' => 'required|numeric|between:-90,90',
             'driver_lng' => 'required|numeric|between:-180,180',
             'heading' => 'nullable|numeric|between:0,360',
             'speed' => 'nullable|numeric|min:0',
         ]);
-
-        // Update ride's current driver location
         $ride->update([
             'current_driver_lat' => $data['driver_lat'],
             'current_driver_lng' => $data['driver_lng'],
         ]);
-
-        // Also update driver's global location
         $driver->update([
             'current_driver_lat' => $data['driver_lat'],
             'current_driver_lng' => $data['driver_lng'],
         ]);
-
-        // Log location for tracking (if rideLogs relation exists)
         if (method_exists($ride, 'rideLogs')) {
             $ride->rideLogs()->create([
                 'driver_lat' => $data['driver_lat'],
@@ -705,20 +669,13 @@ public function current(Request $request)
                 'timestamp' => now(),
             ]);
         }
-
-        // Get route polyline
         $routePolyline = null;
         $destination = null;
-
-        // Determine destination based on ride status
         if ($ride->status === 'accepted' || $ride->status === 'arrived') {
-            // Driver is heading to pickup
             $destination = ['lat' => $ride->origin_lat, 'lng' => $ride->origin_lng];
         } elseif ($ride->status === 'in_progress') {
-            // Driver is heading to destination
             $destination = ['lat' => $ride->destination_lat, 'lng' => $ride->destination_lng];
         }
-
         if ($destination) {
             try {
                 $coords = $this->getRoutePolyline(
@@ -735,15 +692,12 @@ public function current(Request $request)
                 ]);
             }
         }
-
-        // Broadcast location update
         broadcast(new DriverLocationUpdated(
             $driver,
             $ride->id,
             $routePolyline,
             $ride
         ))->toOthers();
-
         return response()->json([
             'status' => 'location updated',
             'ride_id' => $ride->id,
@@ -771,7 +725,6 @@ public function current(Request $request)
                 ->whereIn('status', $statuses)
                 ->with(['driver.user', 'passenger']);
         } else {
-            // Admin or other roles
             return Ride::whereIn('status', $statuses)
                 ->with(['driver.user', 'passenger']);
         }
@@ -794,11 +747,9 @@ public function current(Request $request)
     protected function calculateDistanceToPickup(Ride $ride, Driver $driver)
     {
         $cacheKey = "distance_pickup_{$driver->id}_{$ride->id}";
-
         return Cache::remember($cacheKey, 300, function () use ($ride, $driver) {
             $maxRetries = 2;
             $retryDelay = 1;
-
             for ($i = 0; $i < $maxRetries; $i++) {
                 try {
                     $response = Http::timeout(10)
@@ -807,7 +758,6 @@ public function current(Request $request)
                             'start' => "{$driver->current_driver_lng},{$driver->current_driver_lat}",
                             'end'   => "{$ride->origin_lng},{$ride->origin_lat}",
                         ]);
-
                     if ($response->successful()) {
                         $data = $response->json();
                         if (isset($data['features'][0]['properties']['segments'][0]['distance'])) {
@@ -822,7 +772,6 @@ public function current(Request $request)
                     }
                 }
             }
-
             Log::warning('Using Haversine fallback for distance calculation');
             return $this->calculateDistance(
                 $driver->current_driver_lat,
@@ -837,11 +786,9 @@ public function current(Request $request)
     protected function calculateEstimatedTimeToPickup(Ride $ride, Driver $driver)
     {
         $cacheKey = "eta_pickup_{$driver->id}_{$ride->id}";
-
         return Cache::remember($cacheKey, 300, function () use ($ride, $driver) {
             $maxRetries = 2;
             $retryDelay = 1;
-
             for ($i = 0; $i < $maxRetries; $i++) {
                 try {
                     $response = Http::timeout(10)
@@ -850,7 +797,6 @@ public function current(Request $request)
                             'start' => "{$driver->current_driver_lng},{$driver->current_driver_lat}",
                             'end'   => "{$ride->origin_lng},{$ride->origin_lat}",
                         ]);
-
                     if ($response->successful()) {
                         $data = $response->json();
                         if (isset($data['features'][0]['properties']['segments'][0]['duration'])) {
@@ -865,8 +811,6 @@ public function current(Request $request)
                     }
                 }
             }
-
-            // Fallback: approximate from distance
             $distance = $this->calculateDistanceToPickup($ride, $driver);
             $averageSpeed = config('rides.average_speed_kmh', 30);
             return $distance ? round(($distance / $averageSpeed) * 60, 1) : null;

@@ -150,4 +150,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('{notification}/read', [AuthController::class, 'markNotificationRead']);
         Route::post('read-all', [AuthController::class, 'markAllNotificationsRead']);
     });
+    // expo service
+    Route::post('/update-push-token', [AuthController::class, 'updatePushToken']);
+
 });

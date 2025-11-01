@@ -258,4 +258,16 @@ public function completeDriverProfile(Request $request)
             'message' => 'All notifications marked as read'
         ]);
     }
+
+    public function updatePushToken(Request $request)
+{
+    $request->validate([
+        'expo_push_token' => 'required|string',
+    ]);
+    $user = $request->user();
+    $user->expo_push_token = $request->expo_push_token;
+    $user->save();
+    return response()->json(['message' => 'Push token updated successfully']);
+}
+
 }

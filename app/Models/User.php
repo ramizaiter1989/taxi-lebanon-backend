@@ -36,6 +36,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'current_lat', // optional
         'current_lng', // optional
         'last_location_update', // optional
+        'expo_push_token',
     ];
 
     /**
