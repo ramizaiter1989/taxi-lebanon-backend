@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Cache;
 use App\Http\Resources\RideResource;
 use App\Services\GeocodingService;
 use App\Services\RouteService;
-use App\Services\ExpoPushNotificationService;
+use App\Services\ExpoPushNotificationService; // ✅ ADD THIS
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -26,8 +26,9 @@ class RideController extends Controller
 {
     use PolylineTrait;
 
-    protected $expoPushService;
+    protected $expoPushService; // ✅ ADD THIS
 
+    // ✅ MODIFY CONSTRUCTOR
     public function __construct(ExpoPushNotificationService $expoPushService)
     {
         if (!env('ORS_API_KEY')) {
@@ -36,12 +37,13 @@ class RideController extends Controller
         $this->expoPushService = $expoPushService;
     }
 
-    // ... [Other methods remain the same until acceptRide] ...
+    // ... [ALL OTHER METHODS STAY THE SAME UNTIL acceptRide] ...
 
     // POST /api/rides/{ride}/accept - Accept ride
     public function acceptRide(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
+
         if (!$driver) {
             return response()->json(['error' => 'Only drivers can accept rides'], 403);
         }
@@ -77,6 +79,7 @@ class RideController extends Controller
                     $ride->origin_lat,
                     $ride->origin_lng
                 );
+
                 $maxAcceptanceRange = config('rides.max_acceptance_range_km', 15);
                 if ($distance > $maxAcceptanceRange) {
                     return response()->json(['error' => 'You are too far from the pickup location'], 400);
@@ -94,20 +97,11 @@ class RideController extends Controller
             $estimatedTime = $this->calculateEstimatedTimeToPickup($ride, $driver);
             $distanceToPickup = $this->calculateDistanceToPickup($ride, $driver);
 
-            // ✅ FIXED: Get passenger's push token correctly
-            $passengerPushToken = $ride->passenger->expo_push_token;
-            
-            Log::info('Attempting to send push notification', [
-                'ride_id' => $ride->id,
-                'passenger_id' => $ride->passenger->id,
-                'has_token' => !empty($passengerPushToken),
-                'token_preview' => $passengerPushToken ? substr($passengerPushToken, 0, 30) . '...' : 'null'
-            ]);
-
-            if ($passengerPushToken) {
+            // ✅ ADD PUSH NOTIFICATION HERE
+            if ($ride->passenger->expo_push_token) {
                 try {
-                    $sent = $this->expoPushService->sendPushNotification(
-                        [$passengerPushToken],
+                    $this->expoPushService->sendPushNotification(
+                        [$ride->passenger->expo_push_token],
                         'Ride Accepted! 🚗',
                         "{$driver->user->name} is coming to pick you up. ETA: {$estimatedTime} minutes",
                         [
@@ -117,25 +111,12 @@ class RideController extends Controller
                             'eta' => $estimatedTime,
                         ]
                     );
-                    
-                    Log::info('Push notification sent', [
-                        'success' => $sent,
-                        'ride_id' => $ride->id
-                    ]);
                 } catch (\Exception $e) {
-                    Log::error('Push notification failed', [
-                        'error' => $e->getMessage(),
-                        'ride_id' => $ride->id
-                    ]);
+                    Log::error('Push notification failed', ['error' => $e->getMessage()]);
                 }
-            } else {
-                Log::warning('No push token for passenger', [
-                    'passenger_id' => $ride->passenger->id,
-                    'ride_id' => $ride->id
-                ]);
             }
+            // ✅ END PUSH NOTIFICATION
 
-            // Database notification (fallback)
             $ride->passenger->notify(new RideNotification(
                 'Ride Accepted',
                 'Your ride has been accepted by a driver.',
@@ -173,7 +154,6 @@ class RideController extends Controller
                 'ride_id' => $ride->id,
                 'driver_id' => $driver->id,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
             return response()->json(['error' => 'Failed to accept ride. Please try again.'], 500);
         }
@@ -183,11 +163,13 @@ class RideController extends Controller
     public function startRide(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
+
         if (!$driver || $ride->driver_id !== $driver->id) {
             return response()->json(['error' => 'Only assigned driver can start the ride'], 403);
         }
 
         $validTransitions = ['arrived' => ['in_progress']];
+
         if (!isset($validTransitions[$ride->status]) || !in_array('in_progress', $validTransitions[$ride->status])) {
             return response()->json(['error' => 'Invalid ride status transition'], 400);
         }
@@ -196,23 +178,20 @@ class RideController extends Controller
         $ride->started_at = now();
         $ride->save();
 
-        // ✅ FIXED: Better error handling
-        $passengerPushToken = $ride->passenger->expo_push_token;
-        if ($passengerPushToken) {
+        // ✅ ADD PUSH NOTIFICATION HERE
+        if ($ride->passenger->expo_push_token) {
             try {
                 $this->expoPushService->sendPushNotification(
-                    [$passengerPushToken],
+                    [$ride->passenger->expo_push_token],
                     'Trip Started 🛣️',
                     'Your ride has begun. Enjoy your journey!',
                     ['type' => 'trip_started', 'ride_id' => $ride->id]
                 );
             } catch (\Exception $e) {
-                Log::error('Push notification failed in startRide', [
-                    'error' => $e->getMessage(),
-                    'ride_id' => $ride->id
-                ]);
+                Log::error('Push notification failed', ['error' => $e->getMessage()]);
             }
         }
+        // ✅ END PUSH NOTIFICATION
 
         $ride->passenger->notify(new RideNotification(
             'Ride Started',
@@ -230,11 +209,13 @@ class RideController extends Controller
     public function markArrived(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
+
         if (!$driver || $ride->driver_id !== $driver->id) {
             return response()->json(['error' => 'Only assigned driver can mark arrival'], 403);
         }
 
         $validTransitions = ['accepted' => ['arrived']];
+
         if (!isset($validTransitions[$ride->status]) || !in_array('arrived', $validTransitions[$ride->status])) {
             return response()->json(['error' => 'Invalid ride status transition'], 400);
         }
@@ -243,21 +224,20 @@ class RideController extends Controller
         $ride->arrived_at = now();
         $ride->save();
 
-        $passengerPushToken = $ride->passenger->expo_push_token;
-        if ($passengerPushToken) {
+        // ✅ ADD PUSH NOTIFICATION HERE
+        if ($ride->passenger->expo_push_token) {
             try {
                 $this->expoPushService->sendPushNotification(
-                    [$passengerPushToken],
+                    [$ride->passenger->expo_push_token],
                     'Driver Arriving 📍',
                     "{$driver->user->name} is almost at your pickup location",
                     ['type' => 'driver_arriving', 'ride_id' => $ride->id]
                 );
             } catch (\Exception $e) {
-                Log::error('Push notification failed in markArrived', [
-                    'error' => $e->getMessage()
-                ]);
+                Log::error('Push notification failed', ['error' => $e->getMessage()]);
             }
         }
+        // ✅ END PUSH NOTIFICATION
 
         $ride->passenger->notify(new RideNotification(
             'Driver Arrived',
@@ -279,6 +259,7 @@ class RideController extends Controller
     public function completeRide(Request $request, Ride $ride)
     {
         $driver = $request->user()->driver;
+
         if (!$driver || $ride->driver_id !== $driver->id) {
             return response()->json(['error' => 'Only assigned driver can complete the ride'], 403);
         }
@@ -294,6 +275,7 @@ class RideController extends Controller
 
             if (!empty($ride->distance) && !empty($ride->duration)) {
                 $finalFare = $ride->calculateFare(true);
+
                 if ($ride->fare && abs($finalFare - $ride->fare) > ($ride->fare * 0.1)) {
                     Log::warning('Significant fare change at completion', [
                         'ride_id' => $ride->id,
@@ -301,6 +283,7 @@ class RideController extends Controller
                         'final_fare' => $finalFare,
                     ]);
                 }
+
                 $ride->fare = $finalFare;
             }
 
@@ -309,11 +292,11 @@ class RideController extends Controller
             $driver->availability_status = true;
             $driver->save();
 
-            $passengerPushToken = $ride->passenger->expo_push_token;
-            if ($passengerPushToken) {
+            // ✅ ADD PUSH NOTIFICATION HERE
+            if ($ride->passenger->expo_push_token) {
                 try {
                     $this->expoPushService->sendPushNotification(
-                        [$passengerPushToken],
+                        [$ride->passenger->expo_push_token],
                         'Trip Completed ✅',
                         "You have arrived safely. Fare: {$ride->fare} LBP",
                         [
@@ -323,11 +306,10 @@ class RideController extends Controller
                         ]
                     );
                 } catch (\Exception $e) {
-                    Log::error('Push notification failed in completeRide', [
-                        'error' => $e->getMessage()
-                    ]);
+                    Log::error('Push notification failed', ['error' => $e->getMessage()]);
                 }
             }
+            // ✅ END PUSH NOTIFICATION
 
             $ride->passenger->notify(new RideNotification(
                 'Ride Completed',
@@ -391,38 +373,42 @@ class RideController extends Controller
                 $ride->driver->save();
             }
 
-            // ✅ FIXED: Get correct user's token
-            if ($isPassenger && $ride->driver) {
-                $pushToken = $ride->driver->user->expo_push_token;
-                $title = 'Ride Cancelled ❌';
-                $body = 'The passenger has cancelled the ride.';
-            } else {
-                $pushToken = $ride->passenger->expo_push_token;
-                $title = 'Ride Cancelled ❌';
-                $body = 'The driver has cancelled the ride.';
-            }
-
-            if ($pushToken) {
+            // ✅ ADD PUSH NOTIFICATION HERE
+            if ($isPassenger && $ride->driver && $ride->driver->user->expo_push_token) {
                 try {
                     $this->expoPushService->sendPushNotification(
-                        [$pushToken],
-                        $title,
-                        $body,
+                        [$ride->driver->user->expo_push_token],
+                        'Ride Cancelled ❌',
+                        'The passenger has cancelled the ride.',
                         [
                             'type' => 'ride_cancelled',
                             'ride_id' => $ride->id,
-                            'cancelled_by' => $isPassenger ? 'passenger' : 'driver',
+                            'cancelled_by' => 'passenger',
                             'reason' => $data['reason'],
                         ]
                     );
                 } catch (\Exception $e) {
-                    Log::error('Push notification failed in cancelRide', [
-                        'error' => $e->getMessage()
-                    ]);
+                    Log::error('Push notification failed', ['error' => $e->getMessage()]);
+                }
+            } elseif ($isDriver && $ride->passenger->expo_push_token) {
+                try {
+                    $this->expoPushService->sendPushNotification(
+                        [$ride->passenger->expo_push_token],
+                        'Ride Cancelled ❌',
+                        'The driver has cancelled the ride.',
+                        [
+                            'type' => 'ride_cancelled',
+                            'ride_id' => $ride->id,
+                            'cancelled_by' => 'driver',
+                            'reason' => $data['reason'],
+                        ]
+                    );
+                } catch (\Exception $e) {
+                    Log::error('Push notification failed', ['error' => $e->getMessage()]);
                 }
             }
+            // ✅ END PUSH NOTIFICATION
 
-            // Database notifications
             if ($isPassenger && $ride->driver && $ride->driver->user) {
                 $ride->driver->user->notify(new RideNotification(
                     'Ride Cancelled',
@@ -468,7 +454,7 @@ class RideController extends Controller
         }
     }
 
-    // ... [Rest of the methods remain the same] ...
+    // ... [ALL OTHER METHODS STAY EXACTLY THE SAME] ...
 
 
     // PATCH /api/rides/{ride}/location - Update driver location during a ride
