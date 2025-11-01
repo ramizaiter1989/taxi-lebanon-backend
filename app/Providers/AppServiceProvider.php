@@ -8,6 +8,8 @@ use App\Models\Ride;
 use App\Observers\RideObserver;
 use App\Services\GeocodingService;
 use App\Services\RouteService;
+use Illuminate\Support\Facades\Notification;
+use App\Channels\ExpoChannel;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -34,5 +36,9 @@ class AppServiceProvider extends ServiceProvider
             URL::forceScheme('https');
         }
         Ride::observe(RideObserver::class);
+
+        Notification::extend('expo', function ($app) {
+        return new ExpoChannel($app->make(\App\Services\ExpoPushNotificationService::class));
+    });
     }
 }

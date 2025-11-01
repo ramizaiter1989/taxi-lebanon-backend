@@ -12,7 +12,7 @@ use App\Http\Controllers\Auth\OtpController;
 use App\Http\Controllers\Api\ChatController;
 use App\Http\Controllers\Api\BenzConsumptionController;
 use Illuminate\Support\Facades\Broadcast;
-
+use App\Http\Controllers\Api\NotificationTestController;
 // ========================================
 // PUBLIC API ROUTES (No Authentication)
 // ========================================
@@ -62,7 +62,6 @@ Route::prefix('otp')->group(function () {
 // ========================================
 // PROTECTED API ROUTES (Require Auth)
 // ========================================
-
 Route::middleware('auth:sanctum')->group(function () {
     // User Profile
     Route::get('/user/profile', [AuthController::class, 'profile']);
@@ -150,107 +149,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [AuthController::class, 'getNotifications']);
         Route::post('{notification}/read', [AuthController::class, 'markNotificationRead']);
         Route::post('read-all', [AuthController::class, 'markAllNotificationsRead']);
+        
     });
     // expo service
     Route::post('/update-push-token', [AuthController::class, 'updatePushToken']);
-
-Route::get('/test-push', function() {
-    $service = app(\App\Services\ExpoPushNotificationService::class);
-    $result = $service->sendPushNotification(
-        ['ExponentPushToken[hhEIkoJIAd0uqfvv1ToR6v]'],
-        'Test Title',
-        'Test Body',
-        ['test' => true]
-    );
-    return response()->json(['sent' => $result]);
-})->middleware('auth:sanctum');
-
-Route::get('/test-notification/{userId}', function($userId) {
-    $user = \App\Models\User::find($userId);
-    
-    if (!$user || !$user->expo_push_token) {
-        return response()->json([
-            'error' => 'User not found or no push token',
-            'user_id' => $userId,
-            'has_user' => !!$user,
-            'has_token' => $user ? !!$user->expo_push_token : false,
-            'token' => $user->expo_push_token ?? null
-        ]);
-    }
-    
-    $service = app(\App\Services\ExpoPushNotificationService::class);
-    $result = $service->sendPushNotification(
-        [$user->expo_push_token],
-        'Test Notification 🧪',
-        'This is a test from Laravel backend',
-        ['test' => true, 'timestamp' => now()->toString()]
-    );
-    
-    return response()->json([
-        'sent' => $result,
-        'user_id' => $user->id,
-        'token' => substr($user->expo_push_token, 0, 30) . '...'
-    ]);
-});
+     Route::post('/test/notification', [NotificationTestController::class, 'sendTest']);
 
 
-
-Route::get('/test-notification-detailed/{userId}', function($userId) {
-    $user = \App\Models\User::find($userId);
-    
-    if (!$user || !$user->expo_push_token) {
-        return response()->json([
-            'error' => 'User not found or no push token',
-            'user_id' => $userId,
-            'has_user' => !!$user,
-            'has_token' => $user ? !!$user->expo_push_token : false,
-            'token' => $user->expo_push_token ?? null
-        ]);
-    }
-
-    // Test token format
-    $tokenValid = str_starts_with($user->expo_push_token, 'ExponentPushToken[');
-    
-    // Prepare message
-    $message = [
-        'to' => $user->expo_push_token,
-        'sound' => 'default',
-        'title' => 'Direct Test 🧪',
-        'body' => 'Testing Expo API directly - ' . now()->format('H:i:s'),
-        'data' => ['test' => true, 'timestamp' => now()->toString()],
-        'priority' => 'high',
-    ];
-
-    // Test direct HTTP call to Expo
-    try {
-        $response = \Illuminate\Support\Facades\Http::timeout(10)
-            ->withHeaders([
-                'Accept' => 'application/json',
-                'Content-Type' => 'application/json',
-            ])
-            ->post('https://exp.host/--/api/v2/push/send', [$message]);
-
-        $statusCode = $response->status();
-        $responseBody = $response->json();
-
-        return response()->json([
-            'test_type' => 'direct_http',
-            'token_valid_format' => $tokenValid,
-            'token_preview' => substr($user->expo_push_token, 0, 40) . '...',
-            'http_status' => $statusCode,
-            'http_successful' => $response->successful(),
-            'expo_response' => $responseBody,
-            'raw_response' => $response->body(),
-            'message_sent' => $message,
-        ]);
-    } catch (\Exception $e) {
-        return response()->json([
-            'test_type' => 'direct_http',
-            'error' => $e->getMessage(),
-            'error_type' => get_class($e),
-            'token_valid_format' => $tokenValid,
-            'token_preview' => substr($user->expo_push_token, 0, 40) . '...',
-        ], 500);
-    }
-});
 });
