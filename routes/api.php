@@ -152,5 +152,14 @@ Route::middleware('auth:sanctum')->group(function () {
     });
     // expo service
     Route::post('/update-push-token', [AuthController::class, 'updatePushToken']);
-
+Route::get('/test-push', function() {
+    $service = app(\App\Services\ExpoPushNotificationService::class);
+    $result = $service->sendPushNotification(
+        ['ExponentPushToken[hhEIkoJIAd0uqfvv1ToR6v]'],
+        'Test Title',
+        'Test Body',
+        ['test' => true]
+    );
+    return response()->json(['sent' => $result]);
+})->middleware('auth:sanctum');
 });
