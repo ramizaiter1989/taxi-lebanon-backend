@@ -224,69 +224,93 @@ class RideController extends Controller
 
     // GET /api/rides/available - Available rides for driver
     public function availableRides(Request $request, GeocodingService $geocodingService)
-    {
-        $driver = $request->user()->driver;
-        if (!$driver) {
-            return response()->json(['error' => 'Only drivers can view available rides'], 403);
-        }
-        if ($driver->availability_status !== true) {
-            return response()->json(['error' => 'Driver must be available to view rides'], 400);
-        }
-        if ($driver->current_driver_lat === null || $driver->current_driver_lng === null) {
-            return response()->json(['error' => 'Driver location not set'], 400);
-        }
-        // Check if driver already has an active ride
-        $activeRide = Ride::where('driver_id', $driver->id)
-            ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
-            ->exists();
-        if ($activeRide) {
-            return response()->json(['error' => 'You already have an active ride'], 400);
-        }
-        $scanningRange = $driver->scanning_range_km ?? config('rides.default_scanning_range', 10);
-        $rides = Ride::where('status', 'pending')
-            ->whereNull('driver_id')
-            ->select('*')
-            ->selectRaw('
-                (6371 * acos(
-                    cos(radians(?)) *
-                    cos(radians(origin_lat)) *
-                    cos(radians(origin_lng) - radians(?)) +
-                    sin(radians(?)) *
-                    sin(radians(origin_lat))
-                )) as distance_to_pickup', [
-                $driver->current_driver_lat,
-                $driver->current_driver_lng,
-                $driver->current_driver_lat
-            ])
-            ->having('distance_to_pickup', '<=', $scanningRange)
-            ->orderBy('distance_to_pickup', 'asc')
-            ->with('passenger')
-            ->limit(20)
-            ->get();
-        // Batch geocoding to reduce API calls
-        $coordinates = [];
-        foreach ($rides as $ride) {
-            $coordinates[] = [$ride->origin_lat, $ride->origin_lng];
-            $coordinates[] = [$ride->destination_lat, $ride->destination_lng];
-        }
-        $addresses = Cache::remember(
-            'geocode_' . md5(serialize($coordinates)),
-            now()->addHours(6),
-            function () use ($geocodingService, $coordinates) {
-                return $geocodingService->batchGetAddresses($coordinates);
-            }
-        );
-        $ridesWithAddresses = $rides->map(function ($ride, $index) use ($addresses) {
-            $originIndex = $index * 2;
-            $destIndex = $originIndex + 1;
-            return array_merge($ride->toArray(), [
-                'origin_address' => $addresses[$originIndex] ?? 'Address unavailable',
-                'destination_address' => $addresses[$destIndex] ?? 'Address unavailable',
-                'distance_to_pickup_km' => round($ride->distance_to_pickup, 2),
-            ]);
-        });
-        return response()->json($ridesWithAddresses);
+{
+    $driver = $request->user()->driver;
+    if (!$driver) {
+        return response()->json(['error' => 'Only drivers can view available rides'], 403);
     }
+    if ($driver->availability_status !== true) {
+        return response()->json(['error' => 'Driver must be available to view rides'], 400);
+    }
+    if ($driver->current_driver_lat === null || $driver->current_driver_lng === null) {
+        return response()->json(['error' => 'Driver location not set'], 400);
+    }
+    
+    // Check if driver already has an active ride
+    $activeRide = Ride::where('driver_id', $driver->id)
+        ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
+        ->exists();
+    if ($activeRide) {
+        return response()->json(['error' => 'You already have an active ride'], 400);
+    }
+    
+    $scanningRange = $driver->scanning_range_km ?? config('rides.default_scanning_range', 10);
+    
+    // Get ride IDs that this driver has already declined
+    $declinedRideIds = \App\Models\RideDecline::where('driver_id', $driver->id)
+        ->pluck('ride_id')
+        ->toArray();
+    
+    \Log::info('Declined rides for driver', [
+        'driver_id' => $driver->id,
+        'declined_ride_ids' => $declinedRideIds
+    ]);
+    
+    $rides = Ride::where('status', 'pending')
+        ->whereNull('driver_id')
+        ->whereNotIn('id', $declinedRideIds) // CRITICAL: Filter out declined rides
+        ->select('*')
+        ->selectRaw('
+            (6371 * acos(
+                cos(radians(?)) *
+                cos(radians(origin_lat)) *
+                cos(radians(origin_lng) - radians(?)) +
+                sin(radians(?)) *
+                sin(radians(origin_lat))
+            )) as distance_to_pickup', [
+            $driver->current_driver_lat,
+            $driver->current_driver_lng,
+            $driver->current_driver_lat
+        ])
+        ->having('distance_to_pickup', '<=', $scanningRange)
+        ->orderBy('distance_to_pickup', 'asc')
+        ->with('passenger')
+        ->limit(20)
+        ->get();
+    
+    \Log::info('Available rides after filtering', [
+        'driver_id' => $driver->id,
+        'total_rides' => $rides->count(),
+        'ride_ids' => $rides->pluck('id')->toArray()
+    ]);
+    
+    // Batch geocoding to reduce API calls
+    $coordinates = [];
+    foreach ($rides as $ride) {
+        $coordinates[] = [$ride->origin_lat, $ride->origin_lng];
+        $coordinates[] = [$ride->destination_lat, $ride->destination_lng];
+    }
+    
+    $addresses = Cache::remember(
+        'geocode_' . md5(serialize($coordinates)),
+        now()->addHours(6),
+        function () use ($geocodingService, $coordinates) {
+            return $geocodingService->batchGetAddresses($coordinates);
+        }
+    );
+    
+    $ridesWithAddresses = $rides->map(function ($ride, $index) use ($addresses) {
+        $originIndex = $index * 2;
+        $destIndex = $originIndex + 1;
+        return array_merge($ride->toArray(), [
+            'origin_address' => $addresses[$originIndex] ?? 'Address unavailable',
+            'destination_address' => $addresses[$destIndex] ?? 'Address unavailable',
+            'distance_to_pickup_km' => round($ride->distance_to_pickup, 2),
+        ]);
+    });
+    
+    return response()->json($ridesWithAddresses);
+}
 
     // POST /api/rides/{ride}/accept - Accept ride
     public function acceptRide(Request $request, Ride $ride)
