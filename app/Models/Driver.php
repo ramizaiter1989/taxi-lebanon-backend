@@ -66,4 +66,9 @@ class Driver extends Model
     {
         return $this->hasMany(DriverActiveDuration::class);
     }
+    public function declinedRides()
+{
+    return $this->hasMany(RideDecline::class);
+}
+
 }

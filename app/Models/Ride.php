@@ -84,6 +84,11 @@ class Ride extends Model
     {
         return $this->belongsTo(PromoCode::class);
     }
+    public function declines()
+{
+    return $this->hasMany(RideDecline::class);
+}
+
 
     // Accessors
     public function getDurationsAttribute()

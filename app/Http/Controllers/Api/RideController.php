@@ -761,4 +761,34 @@ class RideController extends Controller
             return $distance ? round(($distance / $averageSpeed) * 60, 1) : null;
         });
     }
+    // POST /api/rides/{ride}/decline
+public function declineRide(Request $request, Ride $ride)
+{
+    $driver = $request->user()->driver;
+    if (!$driver) {
+        return response()->json(['error' => 'Only drivers can decline rides'], 403);
+    }
+
+    // If driver is assigned or ride not pending, block decline
+    if ($ride->driver_id || $ride->status !== 'pending') {
+        return response()->json(['error' => 'Ride is no longer available to decline'], 409);
+    }
+
+    // Record decline (unique constraint in migration prevents duplicates)
+    try {
+        \App\Models\RideDecline::firstOrCreate([
+            'ride_id' => $ride->id,
+            'driver_id' => $driver->id,
+        ]);
+
+        // Optionally broadcast removal for this driver only (if you have private channels)
+        // broadcast(new RideRemoved($ride->id))->toOthers(); // careful: this will remove for all
+
+        return response()->json(['message' => 'Ride declined successfully']);
+    } catch (\Exception $e) {
+        \Log::error('Error declining ride', ['ride' => $ride->id, 'driver' => $driver->id, 'err' => $e->getMessage()]);
+        return response()->json(['error' => 'Failed to decline ride'], 500);
+    }
+}
+
 }
