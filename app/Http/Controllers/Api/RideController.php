@@ -222,8 +222,9 @@ class RideController extends Controller
         }
     }
 
-    // GET /api/rides/available - Available rides for driver
-    public function availableRides(Request $request, GeocodingService $geocodingService)
+    
+   // GET /api/rides/available - Available rides for driver
+public function availableRides(Request $request, GeocodingService $geocodingService)
 {
     $driver = $request->user()->driver;
     if (!$driver) {
@@ -256,9 +257,9 @@ class RideController extends Controller
         'declined_ride_ids' => $declinedRideIds
     ]);
     
-    $rides = Ride::where('status', 'pending')
+    // Build the query with proper handling of empty declined array
+    $query = Ride::where('status', 'pending')
         ->whereNull('driver_id')
-        ->whereNotIn('id', $declinedRideIds) // CRITICAL: Filter out declined rides
         ->select('*')
         ->selectRaw('
             (6371 * acos(
@@ -271,7 +272,14 @@ class RideController extends Controller
             $driver->current_driver_lat,
             $driver->current_driver_lng,
             $driver->current_driver_lat
-        ])
+        ]);
+    
+    // Only add whereNotIn if there are declined rides
+    if (!empty($declinedRideIds)) {
+        $query->whereNotIn('id', $declinedRideIds);
+    }
+    
+    $rides = $query
         ->having('distance_to_pickup', '<=', $scanningRange)
         ->orderBy('distance_to_pickup', 'asc')
         ->with('passenger')
@@ -517,6 +525,45 @@ class RideController extends Controller
             return response()->json(['error' => 'Failed to complete ride. Please try again.'], 500);
         }
     }
+
+    // POST /api/rides/{ride}/decline
+public function declineRide(Request $request, Ride $ride)
+{
+    $driver = $request->user()->driver;
+    if (!$driver) {
+        return response()->json(['error' => 'Only drivers can decline rides'], 403);
+    }
+
+    // If driver is assigned or ride not pending, block decline
+    if ($ride->driver_id || $ride->status !== 'pending') {
+        return response()->json(['error' => 'Ride is no longer available to decline'], 409);
+    }
+
+    // Record decline (unique constraint in migration prevents duplicates)
+    try {
+        \App\Models\RideDecline::firstOrCreate([
+            'ride_id' => $ride->id,
+            'driver_id' => $driver->id,
+        ]);
+
+        \Log::info('Ride declined by driver', [
+            'ride_id' => $ride->id,
+            'driver_id' => $driver->id,
+        ]);
+
+        // DO NOT broadcast RideRemoved here - only the declining driver should not see it
+        // Other drivers should still be able to see and accept this ride
+
+        return response()->json(['message' => 'Ride declined successfully']);
+    } catch (\Exception $e) {
+        \Log::error('Error declining ride', [
+            'ride' => $ride->id, 
+            'driver' => $driver->id, 
+            'err' => $e->getMessage()
+        ]);
+        return response()->json(['error' => 'Failed to decline ride'], 500);
+    }
+}
 
     // POST /api/rides/{ride}/cancel - Passenger or driver cancels a ride
     public function cancelRide(Request $request, Ride $ride)
@@ -785,34 +832,5 @@ class RideController extends Controller
             return $distance ? round(($distance / $averageSpeed) * 60, 1) : null;
         });
     }
-    // POST /api/rides/{ride}/decline
-public function declineRide(Request $request, Ride $ride)
-{
-    $driver = $request->user()->driver;
-    if (!$driver) {
-        return response()->json(['error' => 'Only drivers can decline rides'], 403);
-    }
-
-    // If driver is assigned or ride not pending, block decline
-    if ($ride->driver_id || $ride->status !== 'pending') {
-        return response()->json(['error' => 'Ride is no longer available to decline'], 409);
-    }
-
-    // Record decline (unique constraint in migration prevents duplicates)
-    try {
-        \App\Models\RideDecline::firstOrCreate([
-            'ride_id' => $ride->id,
-            'driver_id' => $driver->id,
-        ]);
-
-        // Optionally broadcast removal for this driver only (if you have private channels)
-        // broadcast(new RideRemoved($ride->id))->toOthers(); // careful: this will remove for all
-
-        return response()->json(['message' => 'Ride declined successfully']);
-    } catch (\Exception $e) {
-        \Log::error('Error declining ride', ['ride' => $ride->id, 'driver' => $driver->id, 'err' => $e->getMessage()]);
-        return response()->json(['error' => 'Failed to decline ride'], 500);
-    }
-}
 
 }
