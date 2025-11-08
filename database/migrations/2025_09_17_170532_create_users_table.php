@@ -6,9 +6,6 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('users', function (Blueprint $table) {
@@ -19,6 +16,7 @@ return new class extends Migration
             $table->string('email')->unique();
             $table->timestamp('email_verified_at')->nullable();
             $table->string('phone')->unique()->nullable();
+            $table->string('expo_push_token')->nullable(); // ✅ merged here
             $table->string('password');
 
             // Verification & login
@@ -32,8 +30,8 @@ return new class extends Migration
             $table->string('fcm_token')->nullable();
 
             // Profile & role
-            $table->enum('gender', ['male','female'])->default('female');
-            $table->enum('role', ['passenger','driver','admin'])->default('passenger');
+            $table->enum('gender', ['male', 'female'])->default('female');
+            $table->enum('role', ['passenger', 'driver', 'admin'])->default('passenger');
             $table->string('profile_photo')->nullable();
             $table->boolean('status')->default(true);
             $table->boolean('is_locked')->default(false);
@@ -47,9 +45,6 @@ return new class extends Migration
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('users');

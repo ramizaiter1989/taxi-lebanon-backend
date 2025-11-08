@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\ChatController;
 use App\Http\Controllers\Api\BenzConsumptionController;
 use Illuminate\Support\Facades\Broadcast;
 use App\Http\Controllers\Api\NotificationTestController;
+use \App\Http\Controllers\Admin\FareSettingsController;
 // ========================================
 // PUBLIC API ROUTES (No Authentication)
 // ========================================
@@ -77,8 +78,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('users', [AdminController::class, 'allUsers']);
 
         Route::prefix('fare-settings')->group(function () {
-            Route::get('/', [\App\Http\Controllers\Admin\FareSettingsController::class, 'index']);
-            Route::put('/', [\App\Http\Controllers\Admin\FareSettingsController::class, 'update']);
+            Route::get('/', [FareSettingsController::class, 'index']);
+            Route::put('/', [FareSettingsController::class, 'update']);
         });
     });
 
@@ -91,6 +92,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('profile', [DriverController::class, 'updateProfile']);
         Route::post('go-online', [DriverController::class, 'goOnline']);
         Route::post('go-offline', [DriverController::class, 'goOffline']);
+        Route::get('/{driver}/active-time', [DriverController::class, 'getActiveTime']);
         Route::post('location', [DriverController::class, 'updateLocation']);
         Route::put('range', [DriverController::class, 'updateRange']);
         Route::get('activity-logs', [DriverController::class, 'activityLogs']);

@@ -463,6 +463,61 @@ public function updateProfile(Request $request, Driver $driver)
         return response()->json(['message' => 'Driver offline', 'driver' => $driver]);
     }
 
+/**
+ * Get total active time for a driver (today or custom period)
+ *
+ * @param \Illuminate\Http\Request $request
+ * @param \App\Models\Driver $driver
+ * @return \Illuminate\Http\JsonResponse
+ */
+public function getActiveTime(Request $request, Driver $driver)
+{
+    $this->authorizeDriver($driver);
+
+    $period = $request->input('period', 'today'); // Default: today
+    $startDate = null;
+    $endDate = null;
+
+    switch ($period) {
+        case 'today':
+            $startDate = Carbon::today();
+            $endDate = Carbon::today()->endOfDay();
+            break;
+        case 'week':
+            $startDate = Carbon::now()->startOfWeek();
+            $endDate = Carbon::now()->endOfWeek();
+            break;
+        case 'month':
+            $startDate = Carbon::now()->startOfMonth();
+            $endDate = Carbon::now()->endOfMonth();
+            break;
+        case 'custom':
+            $request->validate([
+                'start_date' => 'required|date',
+                'end_date' => 'required|date|after_or_equal:start_date',
+            ]);
+            $startDate = Carbon::parse($request->start_date)->startOfDay();
+            $endDate = Carbon::parse($request->end_date)->endOfDay();
+            break;
+        default:
+            return response()->json(['error' => 'Invalid period'], 400);
+    }
+
+    $seconds = $driver->activeDurations()
+        ->whereBetween('active_at', [$startDate, $endDate])
+        ->sum('duration_seconds');
+
+    $formattedDuration = gmdate('H:i:s', $seconds);
+
+    return response()->json([
+        'driver_id' => $driver->id,
+        'period' => $period,
+        'start_date' => $startDate->toDateString(),
+        'end_date' => $endDate->toDateString(),
+        'total_active_time_seconds' => $seconds,
+        'total_active_time_formatted' => $formattedDuration,
+    ]);
+}
 
     /**
      * Update driver's current location

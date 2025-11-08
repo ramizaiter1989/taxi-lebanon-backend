@@ -32,9 +32,9 @@ return new class extends Migration
                 'pending',      // created by passenger, waiting for driver
                 'accepted',     // driver accepted
                 'in_progress',  // ride started (driver & passenger traveling to destination)
-                'arrived',      // driver reached destination (within ~5m) OR passenger ends early; fare later added to driver balance
-                'cancelled',     // ride cancelled
-                'completed' 
+                'arrived',      // driver reached destination
+                'cancelled',    // ride cancelled
+                'completed'     // ride finished successfully
             ])->default('pending');
 
             // Fare info
@@ -46,7 +46,20 @@ return new class extends Migration
             $table->timestamp('accepted_at')->nullable();   // when driver accepts
             $table->timestamp('started_at')->nullable();    // when ride begins
             $table->timestamp('arrived_at')->nullable();    // when driver/passenger ends trip
-            $table->timestamp('completed_at')->nullable();  // optional: final settlement timestamp
+            $table->timestamp('completed_at')->nullable();  // final settlement timestamp
+
+            // Cancellation details
+            $table->foreignId('cancelled_by')->nullable()->constrained('users')->onDelete('set null');
+            $table->enum('cancellation_reason', [
+                'driver_no_show',
+                'wrong_location',
+                'changed_mind',
+                'too_expensive',
+                'emergency',
+                'other',
+            ])->nullable();
+            $table->string('cancellation_note', 200)->nullable();
+            $table->timestamp('cancelled_at')->nullable();
 
             $table->timestamps();
         });
