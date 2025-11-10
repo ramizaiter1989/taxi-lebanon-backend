@@ -771,25 +771,51 @@ public function saveLocation(Request $request)
         return response()->json(['error' => 'Not a driver'], 403);
     }
 
+    $request->validate([
+        'lat' => 'required|numeric|between:-90,90',
+        'lng' => 'required|numeric|between:-180,180',
+    ]);
+
     $lat = $request->input('lat');
     $lng = $request->input('lng');
 
-    // Save to DB
+    // ✅ Save to DRIVER table
     $driver->update([
+        'current_driver_lat' => $lat,
+        'current_driver_lng' => $lng,
+        'last_location_update' => now(),
+    ]);
+
+    // ✅ Also save to USER table
+    $user->update([
         'current_lat' => $lat,
         'current_lng' => $lng,
         'last_location_update' => now(),
     ]);
 
-    // Also broadcast (optional)
+    // ✅ Broadcast event (optional)
     broadcast(new DriverLocationUpdated(
         $driver->id,
         $user->name,
         $lat,
         $lng
-    ));
+    ))->toOthers();
 
-    return response()->json(['status' => 'saved']);
+    return response()->json([
+        'status' => 'saved',
+        'message' => 'Driver and user location updated successfully',
+        'data' => [
+            'driver' => [
+                'lat' => $driver->current_driver_lat,
+                'lng' => $driver->current_driver_lng,
+            ],
+            'user' => [
+                'lat' => $user->current_lat,
+                'lng' => $user->current_lng,
+            ],
+        ]
+    ]);
 }
+
 
 }

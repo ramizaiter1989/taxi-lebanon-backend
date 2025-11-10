@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Log;
 class LocationService
 {
     /**
-     * Update or stream location for a user
+     * Update or stream location for a user (driver or passenger)
      * 
      * @param User $user
      * @param float $lat
@@ -24,18 +24,28 @@ class LocationService
         try {
             if ($user->role === 'driver') {
                 $driver = $user->driver;
+
                 if (!$driver) {
                     return ['error' => 'Not a driver', 'status' => 403];
                 }
 
                 if ($saveToDB) {
+                    // ✅ Update driver table
                     $driver->update([
                         'current_driver_lat' => $lat,
                         'current_driver_lng' => $lng,
                         'last_location_update' => now(),
                     ]);
+
+                    // ✅ Update user table as well
+                    $user->update([
+                        'current_lat' => $lat,
+                        'current_lng' => $lng,
+                        'last_location_update' => now(),
+                    ]);
                 }
 
+                // ✅ Broadcast live updates to passengers or admin dashboards
                 broadcast(new DriverLocationUpdated(
                     $driver->id,
                     $user->name,
@@ -50,8 +60,9 @@ class LocationService
                     'lng' => $lng,
                     'saved' => $saveToDB
                 ];
+            } 
 
-            } elseif ($user->role === 'passenger') {
+            elseif ($user->role === 'passenger') {
                 if ($saveToDB) {
                     $user->update([
                         'current_lat' => $lat,
