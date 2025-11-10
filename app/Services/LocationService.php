@@ -24,16 +24,21 @@ class LocationService
         try {
             if ($user->role === 'driver') {
                 $driver = $user->driver;
+
                 if (!$driver) {
+                    Log::warning("Driver record missing for user_id {$user->id}");
                     return ['error' => 'Not a driver', 'status' => 403];
                 }
 
                 if ($saveToDB) {
-                    $driver->update([
-                        'current_driver_lat' => $lat,
-                        'current_driver_lng' => $lng,
-                        'last_location_update' => now(),
-                    ]);
+                    $driver->current_driver_lat = $lat;
+                    $driver->current_driver_lng = $lng;
+                    $driver->last_location_update = now();
+                    $driver->save(); // Save driver location
+
+                    // Optional: update user's last_location_update as well
+                    $user->last_location_update = now();
+                    $user->save();
                 }
 
                 broadcast(new DriverLocationUpdated(
@@ -53,11 +58,10 @@ class LocationService
 
             } elseif ($user->role === 'passenger') {
                 if ($saveToDB) {
-                    $user->update([
-                        'current_lat' => $lat,
-                        'current_lng' => $lng,
-                        'last_location_update' => now(),
-                    ]);
+                    $user->current_lat = $lat;
+                    $user->current_lng = $lng;
+                    $user->last_location_update = now();
+                    $user->save(); // Save passenger location
                 }
 
                 if ($user->status) {
