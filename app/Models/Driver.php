@@ -27,6 +27,8 @@ class Driver extends Model
         'insurance_photo',
         'active_at',
         'inactive_at',
+        'last_location_update',
+
     ];
 
     protected $casts = [
