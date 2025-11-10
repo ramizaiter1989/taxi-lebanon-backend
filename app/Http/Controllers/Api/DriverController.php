@@ -528,7 +528,7 @@ public function getActiveTime(Request $request, Driver $driver)
      */
 
 
-public function updateLocation(Request $request, Driver $driver, LocationService $locationService)
+public function updateLocation(Request $request, LocationService $locationService)
 {
     $request->validate([
         'lat' => 'required|numeric|between:-90,90',
@@ -536,10 +536,19 @@ public function updateLocation(Request $request, Driver $driver, LocationService
     ]);
 
     $user = $request->user();
-    if ($user->id !== $driver->user_id) {
-        return response()->json(['error' => 'Unauthorized'], 403);
+
+    // Ensure the user is a driver
+    if ($user->role !== 'driver') {
+        return response()->json(['error' => 'User is not a driver'], 403);
     }
 
+    // Load the driver record
+    $driver = $user->driver;
+    if (!$driver) {
+        return response()->json(['error' => 'Driver record not found'], 404);
+    }
+
+    // Handle location update
     $result = $locationService->handleLocation($user, $request->lat, $request->lng, true);
 
     if (isset($result['error'])) {
@@ -548,10 +557,11 @@ public function updateLocation(Request $request, Driver $driver, LocationService
 
     return response()->json([
         'success' => true,
-        'message' => 'Location updated successfully',
+        'message' => 'Driver location updated successfully',
         'data' => $result
     ]);
 }
+
 
 public function streamLocation(Request $request, LocationService $locationService)
 {
