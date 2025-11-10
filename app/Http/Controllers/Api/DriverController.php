@@ -537,18 +537,10 @@ public function updateLocation(Request $request, LocationService $locationServic
 
     $user = $request->user();
 
-    // Ensure the user is a driver
     if ($user->role !== 'driver') {
         return response()->json(['error' => 'User is not a driver'], 403);
     }
 
-    // Load the driver record
-    $driver = $user->driver;
-    if (!$driver) {
-        return response()->json(['error' => 'Driver record not found'], 404);
-    }
-
-    // Handle location update
     $result = $locationService->handleLocation($user, $request->lat, $request->lng, true);
 
     if (isset($result['error'])) {
@@ -561,7 +553,6 @@ public function updateLocation(Request $request, LocationService $locationServic
         'data' => $result
     ]);
 }
-
 
 public function streamLocation(Request $request, LocationService $locationService)
 {
@@ -762,60 +753,60 @@ public function streamLocation(Request $request, LocationService $locationServic
         });
     }
 
-public function saveLocation(Request $request)
-{
-    $user = $request->user();
-    $driver = $user->driver;
+// public function saveLocation(Request $request)
+// {
+//     $user = $request->user();
+//     $driver = $user->driver;
 
-    if (!$driver) {
-        return response()->json(['error' => 'Not a driver'], 403);
-    }
+//     if (!$driver) {
+//         return response()->json(['error' => 'Not a driver'], 403);
+//     }
 
-    $request->validate([
-        'lat' => 'required|numeric|between:-90,90',
-        'lng' => 'required|numeric|between:-180,180',
-    ]);
+//     $request->validate([
+//         'lat' => 'required|numeric|between:-90,90',
+//         'lng' => 'required|numeric|between:-180,180',
+//     ]);
 
-    $lat = $request->input('lat');
-    $lng = $request->input('lng');
+//     $lat = $request->input('lat');
+//     $lng = $request->input('lng');
 
-    // ✅ Save to DRIVER table
-    $driver->update([
-        'current_driver_lat' => $lat,
-        'current_driver_lng' => $lng,
-        'last_location_update' => now(),
-    ]);
+//     // ✅ Save to DRIVER table
+//     $driver->update([
+//         'current_driver_lat' => $lat,
+//         'current_driver_lng' => $lng,
+//         'last_location_update' => now(),
+//     ]);
 
-    // ✅ Also save to USER table
-    $user->update([
-        'current_lat' => $lat,
-        'current_lng' => $lng,
-        'last_location_update' => now(),
-    ]);
+//     // ✅ Also save to USER table
+//     $user->update([
+//         'current_lat' => $lat,
+//         'current_lng' => $lng,
+//         'last_location_update' => now(),
+//     ]);
 
-    // ✅ Broadcast event (optional)
-    broadcast(new DriverLocationUpdated(
-        $driver->id,
-        $user->name,
-        $lat,
-        $lng
-    ))->toOthers();
+//     // ✅ Broadcast event (optional)
+//     broadcast(new DriverLocationUpdated(
+//         $driver->id,
+//         $user->name,
+//         $lat,
+//         $lng
+//     ))->toOthers();
 
-    return response()->json([
-        'status' => 'saved',
-        'message' => 'Driver and user location updated successfully',
-        'data' => [
-            'driver' => [
-                'lat' => $driver->current_driver_lat,
-                'lng' => $driver->current_driver_lng,
-            ],
-            'user' => [
-                'lat' => $user->current_lat,
-                'lng' => $user->current_lng,
-            ],
-        ]
-    ]);
-}
+//     return response()->json([
+//         'status' => 'saved',
+//         'message' => 'Driver and user location updated successfully',
+//         'data' => [
+//             'driver' => [
+//                 'lat' => $driver->current_driver_lat,
+//                 'lng' => $driver->current_driver_lng,
+//             ],
+//             'user' => [
+//                 'lat' => $user->current_lat,
+//                 'lng' => $user->current_lng,
+//             ],
+//         ]
+//     ]);
+// }
 
 
 }
