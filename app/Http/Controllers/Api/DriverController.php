@@ -413,11 +413,7 @@ public function updateProfile(Request $request, Driver $driver)
     ]);
 }
 
-
-
-
-
-   public function goOnline(Request $request)
+public function goOnline(Request $request)
 {
     $user = Auth::user();
     
@@ -457,6 +453,14 @@ public function updateProfile(Request $request, Driver $driver)
         ], 400);
     }
     
+    // ✅ CRITICAL: Close any orphaned sessions before creating a new one
+    DriverActiveDuration::where('driver_id', $driver->id)
+        ->whereNull('inactive_at')
+        ->update([
+            'inactive_at' => now(),
+            'duration_seconds' => \DB::raw('TIMESTAMPDIFF(SECOND, active_at, NOW())')
+        ]);
+    
     // ✅ Update driver status
     $driver->update([
         'availability_status' => true,
@@ -464,7 +468,7 @@ public function updateProfile(Request $request, Driver $driver)
         'inactive_at' => null,
     ]);
     
-    // ✅ Create activity log
+    // ✅ Create NEW activity log (now safe because we closed orphans)
     DriverActiveDuration::create([
         'driver_id' => $driver->id,
         'active_at' => now(),
@@ -492,9 +496,6 @@ public function updateProfile(Request $request, Driver $driver)
     ]);
 }
 
-/**
- * Driver goes offline - fixed version
- */
 public function goOffline(Request $request)
 {
     $user = Auth::user();
@@ -536,18 +537,19 @@ public function goOffline(Request $request)
         'inactive_at' => now(),
     ]);
     
-    // ✅ Close active session
-    $session = DriverActiveDuration::where('driver_id', $driver->id)
+    // ✅ CRITICAL: Close ALL open sessions (handles duplicates gracefully)
+    $updatedCount = DriverActiveDuration::where('driver_id', $driver->id)
         ->whereNull('inactive_at')
-        ->latest()
-        ->first();
-    
-    if ($session) {
-        $session->update([
+        ->update([
             'inactive_at' => now(),
-            'duration_seconds' => now()->diffInSeconds($session->active_at),
+            'duration_seconds' => \DB::raw('TIMESTAMPDIFF(SECOND, active_at, NOW())')
         ]);
-    }
+    
+    // ✅ Get the most recent session for response
+    $session = DriverActiveDuration::where('driver_id', $driver->id)
+        ->whereNotNull('inactive_at')
+        ->latest('inactive_at')
+        ->first();
     
     // ✅ Broadcast status change
     broadcast(new DriverLocationUpdated(
@@ -559,6 +561,7 @@ public function goOffline(Request $request)
     
     return response()->json([
         'message' => 'Driver is now offline',
+        'closed_sessions' => $updatedCount, // Shows if there were duplicates
         'driver' => [
             'id' => $driver->id,
             'availability_status' => false,
