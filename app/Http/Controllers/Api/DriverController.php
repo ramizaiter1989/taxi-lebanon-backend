@@ -417,51 +417,156 @@ public function updateProfile(Request $request, Driver $driver)
 
 
 
-    public function goOnline(Driver $driver)
-    {
-        $this->authorizeDriver($driver);
-
-        $driver->update([
+   public function goOnline(Request $request)
+{
+    $user = Auth::user();
+    
+    if ($user->role !== 'driver') {
+        return response()->json(['error' => 'Only drivers can go online'], 403);
+    }
+    
+    $driver = $user->driver;
+    
+    if (!$driver) {
+        return response()->json(['error' => 'Driver profile not found'], 404);
+    }
+    
+    // ✅ Check if driver has active ride
+    $activeRide = Ride::where('driver_id', $driver->id)
+        ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
+        ->exists();
+    
+    if ($activeRide) {
+        return response()->json([
+            'error' => 'Cannot go online while you have an active ride'
+        ], 400);
+    }
+    
+    // ✅ Check if already online
+    if ($driver->availability_status) {
+        return response()->json([
+            'message' => 'Already online',
+            'driver' => $driver
+        ]);
+    }
+    
+    // ✅ Validate location exists before going online
+    if (!$driver->current_driver_lat || !$driver->current_driver_lng) {
+        return response()->json([
+            'error' => 'Please enable location services before going online'
+        ], 400);
+    }
+    
+    // ✅ Update driver status
+    $driver->update([
+        'availability_status' => true,
+        'active_at' => now(),
+        'inactive_at' => null,
+    ]);
+    
+    // ✅ Create activity log
+    DriverActiveDuration::create([
+        'driver_id' => $driver->id,
+        'active_at' => now(),
+    ]);
+    
+    // ✅ Broadcast status change
+    broadcast(new DriverLocationUpdated(
+        $driver->id,
+        $user->name,
+        $driver->current_driver_lat,
+        $driver->current_driver_lng
+    ))->toOthers();
+    
+    return response()->json([
+        'message' => 'Driver is now online',
+        'driver' => [
+            'id' => $driver->id,
             'availability_status' => true,
-            'active_at' => now(),
-            'inactive_at' => null,
-        ]);
+            'active_at' => $driver->active_at,
+            'location' => [
+                'lat' => $driver->current_driver_lat,
+                'lng' => $driver->current_driver_lng,
+            ]
+        ]
+    ]);
+}
 
-        DriverActiveDuration::create([
-            'driver_id' => $driver->id,
-            'active_at' => now(),
-        ]);
-
-        broadcast(new DriverLocationUpdated($driver->id, $driver->user->name, null, null))->toOthers();
-
-        return response()->json(['message' => 'Driver online', 'driver' => $driver]);
+/**
+ * Driver goes offline - fixed version
+ */
+public function goOffline(Request $request)
+{
+    $user = Auth::user();
+    
+    if ($user->role !== 'driver') {
+        return response()->json(['error' => 'Only drivers can go offline'], 403);
     }
-
-    public function goOffline(Driver $driver)
-    {
-        $this->authorizeDriver($driver);
-
-        $driver->update([
-            'availability_status' => false,
+    
+    $driver = $user->driver;
+    
+    if (!$driver) {
+        return response()->json(['error' => 'Driver profile not found'], 404);
+    }
+    
+    // ✅ CRITICAL: Check for active ride
+    $activeRide = Ride::where('driver_id', $driver->id)
+        ->whereIn('status', ['accepted', 'in_progress', 'arrived'])
+        ->first();
+    
+    if ($activeRide) {
+        return response()->json([
+            'error' => 'Cannot go offline while you have an active ride',
+            'active_ride_id' => $activeRide->id,
+            'ride_status' => $activeRide->status
+        ], 400);
+    }
+    
+    // ✅ Check if already offline
+    if (!$driver->availability_status) {
+        return response()->json([
+            'message' => 'Already offline',
+            'driver' => $driver
+        ]);
+    }
+    
+    // ✅ Update driver status
+    $driver->update([
+        'availability_status' => false,
+        'inactive_at' => now(),
+    ]);
+    
+    // ✅ Close active session
+    $session = DriverActiveDuration::where('driver_id', $driver->id)
+        ->whereNull('inactive_at')
+        ->latest()
+        ->first();
+    
+    if ($session) {
+        $session->update([
             'inactive_at' => now(),
+            'duration_seconds' => now()->diffInSeconds($session->active_at),
         ]);
-
-        $session = DriverActiveDuration::where('driver_id', $driver->id)
-            ->whereNull('inactive_at')
-            ->latest()
-            ->first();
-
-        if ($session) {
-            $session->update([
-                'inactive_at' => now(),
-                'duration_seconds' => now()->diffInSeconds($session->active_at),
-            ]);
-        }
-
-        broadcast(new DriverLocationUpdated($driver->id, $driver->user->name, null, null))->toOthers();
-
-        return response()->json(['message' => 'Driver offline', 'driver' => $driver]);
     }
+    
+    // ✅ Broadcast status change
+    broadcast(new DriverLocationUpdated(
+        $driver->id,
+        $user->name,
+        null,
+        null
+    ))->toOthers();
+    
+    return response()->json([
+        'message' => 'Driver is now offline',
+        'driver' => [
+            'id' => $driver->id,
+            'availability_status' => false,
+            'inactive_at' => $driver->inactive_at,
+            'session_duration' => $session ? gmdate('H:i:s', $session->duration_seconds) : null
+        ]
+    ]);
+}
 
 /**
  * Get total active time for a driver (today or custom period)
