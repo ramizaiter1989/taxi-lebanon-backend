@@ -708,23 +708,32 @@ public function streamLocation(Request $request, LocationService $locationServic
 
 
 
-    public function updateRange(Request $request, Driver $driver)
-    {
-        $this->authorizeDriver($driver);
+    public function updateRange(Request $request)
+{
+    // Get the authenticated user
+    $user = $request->user();
 
-        $request->validate([
-            'scanning_range_km' => 'required|numeric|min:1|max:5000',
-        ]);
+    // Find the driver record for this user
+    $driver = $user->driver;
 
-        $driver->update([
-            'scanning_range_km' => $request->scanning_range_km,
-        ]);
-
-        return response()->json([
-            'message' => 'Scanning range updated',
-            'range' => $driver->scanning_range_km,
-        ]);
+    if (!$driver) {
+        return response()->json(['message' => 'Driver not found'], 404);
     }
+
+    $request->validate([
+        'scanning_range_km' => 'required|numeric|min:1|max:5000',
+    ]);
+
+    $driver->update([
+        'scanning_range_km' => $request->scanning_range_km,
+    ]);
+
+    return response()->json([
+        'message' => 'Scanning range updated',
+        'range' => $driver->scanning_range_km,
+    ]);
+}
+
 
     public function activityLogs(Driver $driver)
     {
