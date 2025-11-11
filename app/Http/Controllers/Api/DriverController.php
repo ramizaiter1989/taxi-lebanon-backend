@@ -438,7 +438,29 @@ public function goOnline(Request $request)
         ], 400);
     }
     
-    // ✅ Check if already online
+    // ✅ CRITICAL: Check for recent session creation (prevent duplicate requests)
+    $recentSession = DriverActiveDuration::where('driver_id', $driver->id)
+        ->whereNull('inactive_at')
+        ->where('active_at', '>', now()->subSeconds(5)) // Within last 5 seconds
+        ->exists();
+    
+    if ($recentSession) {
+        // Already have a recent session - this is likely a duplicate request
+        return response()->json([
+            'message' => 'Already processing online request',
+            'driver' => [
+                'id' => $driver->id,
+                'availability_status' => true,
+                'active_at' => $driver->active_at,
+                'location' => [
+                    'lat' => $driver->current_driver_lat,
+                    'lng' => $driver->current_driver_lng,
+                ]
+            ]
+        ]);
+    }
+    
+    // ✅ Check if already online (after duplicate check)
     if ($driver->availability_status) {
         return response()->json([
             'message' => 'Already online',
@@ -461,7 +483,7 @@ public function goOnline(Request $request)
             'duration_seconds' => \DB::raw('TIMESTAMPDIFF(SECOND, active_at, NOW())')
         ]);
     
-    // ✅ Update driver status
+    // ✅ Update driver status FIRST (helps prevent race condition)
     $driver->update([
         'availability_status' => true,
         'active_at' => now(),
